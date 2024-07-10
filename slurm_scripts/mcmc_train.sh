@@ -1,0 +1,103 @@
+#!/bin/bash
+#SBATCH  --job-name=mcmc_train
+#SBATCH  --output=/scratch_net/biwidl214/ecetin_scratch/renewed_repo/log/log-%j.out
+#SBATCH --error=/scratch_net/biwidl214/ecetin_scratch/renewed_repo/log/errors-%j.err
+#SBATCH  --gres=gpu:1
+#SBATCH  --cpus-per-task=4
+#SBATCH  --mem=30G
+#SBATCH  --time=24:00:00
+#SBATCH  --nodes=1
+#SBATCH  --nodelist=bmicgpu0[1-9]
+##SBATCH  --partition=gpu.medium
+#SBATCH  --constraint='a6000'
+
+# echo "Starting job"
+cd /scratch_net/biwidl214/ecetin_scratch/renewed_repo
+source /scratch_net/biwidl214/ecetin/conda/etc/profile.d/conda.sh
+conda activate gscodec
+
+# From here, it's just what you executed in srun
+# "mipnerf360/bicycle" "mipnerf360/bonsai" "mipnerf360/counter" \
+    # "mipnerf360/flowers" "mipnerf360/garden" "mipnerf360/kitchen" \
+    # "mipnerf360/room" "mipnerf360/stump" "mipnerf360/treehill" \
+    # "db/playroom" 
+
+scene_names=( "db/drjohnson" "tandt/truck" "tandt/train" )
+
+for scene_name in "${scene_names[@]}"
+do
+    
+    if [ "$scene_name" == "mipnerf360/bicycle" ]; then
+        capmax=6000000
+    fi
+    if [ "$scene_name" == "mipnerf360/bonsai" ]; then
+        capmax=1200000
+    fi
+    if [ "$scene_name" == "mipnerf360/counter" ]; then
+        capmax=1200000
+    fi
+    if [ "$scene_name" == "mipnerf360/flowers" ]; then
+        capmax=3500000
+    fi
+    if [ "$scene_name" == "mipnerf360/garden" ]; then
+        capmax=5800000
+    fi
+    if [ "$scene_name" == "mipnerf360/kitchen" ]; then
+        capmax=1800000
+    fi
+    if [ "$scene_name" == "mipnerf360/room" ]; then
+        capmax=1500000
+    fi
+    if [ "$scene_name" == "mipnerf360/stump" ]; then
+        capmax=4800000
+    fi
+    if [ "$scene_name" == "mipnerf360/treehill" ]; then
+        capmax=3700000
+    fi
+    if [ "$scene_name" == "db/playroom" ]; then
+        capmax=2300000
+    fi
+    if [ "$scene_name" == "db/drjohnson" ]; then
+        capmax=3200000
+    fi
+    if [ "$scene_name" == "tandt/truck" ]; then
+        capmax=2500000
+    fi
+    if [ "$scene_name" == "tandt/train" ]; then
+        capmax=1000000
+    fi
+
+    # No pruning MCMC
+    python train_gaussians.py --scene_name $scene_name \
+    --config ./config/preset_configs/mcmc_gaussian.yaml \
+    --model_path ./output/mcmc/$scene_name \
+    --model mcmc --cap_max $capmax \
+    --radsplat_prune_at 1000000
+
+    python test.py --scene_name $scene_name \
+        --config ./config/preset_configs/mcmc_gaussian.yaml \
+        --model_path ./output/mcmc/$scene_name \
+        --load_iteration 30000 --model mcmc
+
+    # Masked MCMC
+    python train_gaussians.py --scene_name $scene_name \
+        --config ./config/preset_configs/mcmc_gaussian.yaml \
+        --model_path ./output/mcmc_masked/$scene_name \
+        --model masked_mcmc --cap_max $capmax
+
+    python test.py --scene_name $scene_name \
+        --config ./config/preset_configs/mcmc_gaussian.yaml \
+        --model_path ./output/mcmc_masked/$scene_name \
+        --load_iteration 30000 --model masked_mcmc
+
+    # Radsplat MCMC
+    python train_gaussians.py --scene_name $scene_name \
+        --config ./config/preset_configs/mcmc_gaussian.yaml \
+        --model_path ./output/mcmc_radsplat/$scene_name \
+        --model mcmc --cap_max $capmax
+
+    python test.py --scene_name $scene_name \
+        --config ./config/preset_configs/mcmc_gaussian.yaml \
+        --model_path ./output/mcmc_radsplat/$scene_name \
+        --load_iteration 30000 --model mcmc
+done

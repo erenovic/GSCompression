@@ -1,0 +1,104 @@
+dataset:
+  data_path: "/scratch_net/biwidl214/ecetin_scratch/data"
+  data_device: "cuda"
+  images: "images"
+  resolution: -1
+  eval: true
+  white_background: false
+
+  model: latent
+  sh_degree: 3
+  model_path: ./output/latent    # ./output/xxxxx
+  checkpoint: null
+  octree_max_depth: 18
+  granularity_min_threshold: 1.0
+  granularity_max_threshold: 5.0
+
+  feature_dim: 32
+  hidden_dim: 32
+  position_enc:
+    num_levels: 8
+    features_per_level: 4
+    min_resolution: 32
+    max_resolution: 1024
+    log2_hashmap_size: 10
+
+pipeline:
+  convert_SHs_python: false
+  compute_cov3D_python: false
+  debug: false
+  
+  use_wandb: false
+
+
+optimization:
+  iterations: 30_000
+  test_iterations: [5_000, 10_000, 15_000, 20_000, 25_000, 30_000]
+  save_iterations: []
+  checkpoint_iterations: [15_000, 30_000]
+
+  random_background: false
+  
+  densify_until_iter: 15_000
+  
+  position_lr_init: 0.00016
+  position_lr_final: 0.0000016
+  position_lr_delay_mult: 0.01
+  position_lr_max_steps: 30_000
+  feature_lr: 0.0025
+  opacity_lr: 0.05
+  scaling_lr: 0.005
+  rotation_lr: 0.001
+
+  loss_multiplier: 1.0
+  
+  percent_dense: 0.01
+  densification_interval: 100
+  densification_factor: 0.05
+  opacity_reset_interval: 3_000
+  opacity_prune_threshold: 0.005
+  densify_from_iter: 500
+  densify_until_iter: 15_000
+  densify_grad_threshold: 0.0003
+  random_background: false
+
+  lambda_dssim: 0.2
+  lambda_entropy: 0.0001
+  lambda_rec: 1.0
+  lambda_opacity: 0.0001
+  lambda_covariance: 0.01
+
+  compressor_lr: 0.01     
+  compressor_aux_lr: 0.01
+
+  # feature_lr: 0.0075
+  # opacity_lr: 0.02
+  # scaling_lr: 0.007
+  # rotation_lr: 0.002
+
+  mlp_opacity_lr_init: 0.002
+  mlp_opacity_lr_final: 0.00002
+  mlp_opacity_lr_delay_mult: 0.01
+  mlp_opacity_lr_max_steps: 30_000
+
+  mlp_cov_lr_init: 0.004
+  mlp_cov_lr_final: 0.004
+  mlp_cov_lr_delay_mult: 0.01
+  mlp_cov_lr_max_steps: 30_000
+
+  mlp_color_lr_init: 0.008
+  mlp_color_lr_final: 0.00005
+  mlp_color_lr_delay_mult: 0.01
+  mlp_color_lr_max_steps: 30_000
+
+  position_encoding_lr: 0.0025
+  # mlp_extent_lr_final: 0.00005
+  # mlp_extent_lr_delay_mult: 0.01
+  # mlp_extent_lr_max_steps: 30_000
+
+  fit_gaussians_until_iter: 25000
+  
+  freeze_gaussian_geometry: false
+
+  radsplat_prune_threshold: 0.03
+  radsplat_prune_at: [16_001]
