@@ -180,7 +180,7 @@ For further details on how to run the experiments with these 4 methods, you can 
 #### 1. Regular Gaussian Splatting (3D-GS):
 This is the original optimization method proposed in the 3DGS paper. To optimize a Gaussian splat representation with 3D-GS, you can run the following command:
 
-```
+```bash
 python train_gaussians.py --scene_name $scene_name \
     --config_path ./config/preset_configs/base_gaussian.yaml \
     --model_path $model_path \
@@ -193,7 +193,7 @@ An example for the `scene_name` is `tandt/train`, and for `model_path` is `./out
 #### 2. Gaussian Splatting with MCMC (3D-MCMC):
 This is the optimization method proposed in the [3D-MCMC paper](https://ubc-vision.github.io/3dgs-mcmc/). To optimize a Gaussian splat representation with 3D-MCMC, you can run the following command:
 
-```
+```bash
 python train_gaussians.py --scene_name $scene_name \
     --config_path ./config/preset_configs/mcmc_gaussian.yaml \
     --model_path $model_path \
@@ -210,7 +210,7 @@ An example for the `scene_name` is `tandt/train`, and for `model_path` is `./out
 #### 3. Gaussian Splatting with MCMC and Learned Masking:
 This is the optimization method proposed in the [3D-MCMC paper](https://ubc-vision.github.io/3dgs-mcmc) with additional learned masking which was introduced in [Compact3D-GS](https://maincold2.github.io/c3dgs/). To optimize a Gaussian splat representation with 3D-MCMC and learned masking, you can run the following command:
 
-```
+```bash
 python train_gaussians.py --scene_name $scene_name \
     --config_path ./config/preset_configs/mcmc_gaussian.yaml \
     --model_path $model_path \
@@ -222,7 +222,7 @@ where `$scene_name` is the name of the scene,  and `$model_path` is the path to 
 #### 4. Gaussian Splatting with MCMC and RadSplat pruning method:
 This is the optimization method proposed in the [3D-MCMC paper](https://ubc-vision.github.io/3dgs-mcmc) with additional RadSplat pruning method which was introduced in [RadSplat](https://m-niemeyer.github.io/radsplat/). To optimize a Gaussian splat representation with 3D-MCMC and RadSplat pruning method, you can run the following command:
 
-```
+```bash
 python train_gaussians.py --scene_name $scene_name \
     --config_path ./config/preset_configs/mcmc_gaussian.yaml \
     --model_path $model_path \
@@ -242,7 +242,7 @@ For further details on how to run the experiments with these 2 methods, you can 
 
 To train the entropy model in accordance to descriptions in the report provided, you can run the following command:
 
-```
+```bash
 python train_compression.py --scene_name $scene_name \
     --config_path ./config/preset_configs/mcmc_compress.yaml \
     --model_path $model_path \
@@ -257,7 +257,7 @@ where `$scene_name` is the name of the scene, `$model_path` is the path to the m
 
 Multiple examples for how to run the compression can be found in the `./slurm_scripts/mcmc_compression_from25k_train.sh` script. An additional example is provided below:
 
-```
+```bash
 python train_compression.py --scene_name tandt/train \
     --config_path ./config/preset_configs/mcmc_compress.yaml \
     --model_path ./output/mcmc_compress/tandt/train \
@@ -268,7 +268,38 @@ python train_compression.py --scene_name tandt/train \
     --freeze_geometry \
     --checkpoint ./output/mcmc_model/tandt/train/chkpnt25000.pth
 ```
+
 ### Hierarchical Gaussian Splatting Compression
+
+To repeat experiments with hierarchical Gaussian splat compression, you can use the same pretrained Gaussian splat models and compress them with the hierarchical structure. For this, you can use the following command:
+
+```bash
+python train_compression.py --scene_name $scene_name \
+    --config_path ./config/preset_configs/hierarchical_mcmc_gaussian.yaml \
+    --model_path $model_path \
+    --model complete \
+    --cap_max $cap_max \
+    --compressor complete_ms \
+    --extra_iterations 5000 \
+    --freeze_geometry \
+    --checkpoint $checkpoint
+```
+
+where `$scene_name` is the name of the scene, `$model_path` is the path to the model file, `$cap_max` is the maximum number of Gaussians, `$compressor` is the entropy model type (`complete_ms`, we use the mean-scale hyperprior due to its superior compression efficiency), and `$checkpoint` is the path to the Gaussian splat checkpoint provided to be compressed.
+
+Multiple examples for how to run the compression can be found in the `./slurm_scripts/hierarchical_from25k_train.sh` script. An additional example is provided below:
+
+```bash
+python train_compression.py --scene_name tandt/train \
+    --config_path ./config/preset_configs/hierarchical_mcmc_gaussian.yaml \
+    --model_path ./output/residual_coding/tandt/train \
+    --model mcmc \
+    --cap_max 600000 \
+    --compressor complete_ms \
+    --extra_iterations 5000 \
+    --freeze_geometry \
+    --checkpoint ./output/mcmc_model/tandt/train/chkpnt25000.pth
+```
 
 ### Testing
 
@@ -280,6 +311,8 @@ To test the compressed Gaussian splat representation, you can use `test.py` scri
 - `--model`: Model type to be tested. (e.g. `mcmc`, `radsplat`, `complete`,...)
 - `--load_iteration`: Iteration number to be loaded from the checkpoints `folder` in `model_path`. (e.g. `30000`)
 - `--compressor`: Compressor type to be used for testing. (e.g. `meanscale`, `entropybottleneck`, nothing if no compression)
+
+For further examples, please check the `./slurm_scripts/` folder where training and testing pairs are provided.
 
 ## Acknowledgement
 This repository is based on the [3DGS codebase](https://github.com/graphdeco-inria/gaussian-splatting) and [3D-MCMC codebase](https://ubc-vision.github.io/3dgs-mcmc). We would like to thank the authors of these repositories for their contributions.

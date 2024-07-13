@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH  --job-name=mcmc_train
-#SBATCH  --output=/scratch_net/biwidl214/ecetin_scratch/renewed_repo/log/log-%j.out
-#SBATCH --error=/scratch_net/biwidl214/ecetin_scratch/renewed_repo/log/errors-%j.err
+#SBATCH  --output=/scratch_net/biwidl214/ecetin_scratch/GSCompression/log/log-%j.out
+#SBATCH --error=/scratch_net/biwidl214/ecetin_scratch/GSCompression/log/errors-%j.err
 #SBATCH  --gres=gpu:1
 #SBATCH  --cpus-per-task=4
 #SBATCH  --mem=30G
@@ -12,21 +12,15 @@
 #SBATCH  --constraint='a6000'
 
 # echo "Starting job"
-cd /scratch_net/biwidl214/ecetin_scratch/renewed_repo
+cd /scratch_net/biwidl214/ecetin_scratch/GSCompression
 source /scratch_net/biwidl214/ecetin/conda/etc/profile.d/conda.sh
 conda activate gscodec
 
-# From here, it's just what you executed in srun
-# "mipnerf360/bicycle" 
-
-# scene_names=( 
-#     "mipnerf360/bicycle" "mipnerf360/bonsai" "mipnerf360/counter" \
-#     "mipnerf360/flowers" "mipnerf360/garden" "mipnerf360/kitchen" \
-#     "mipnerf360/room" "mipnerf360/stump" "mipnerf360/treehill" \
-#     "db/playroom" "db/drjohnson" \
-#     "tandt/truck" "tandt/train" 
-# )
 scene_names=( 
+    "mipnerf360/bicycle" "mipnerf360/bonsai" "mipnerf360/counter" \
+    "mipnerf360/flowers" "mipnerf360/garden" "mipnerf360/kitchen" \
+    "mipnerf360/room" "mipnerf360/stump" "mipnerf360/treehill" \
+    "db/playroom" "db/drjohnson" \
     "tandt/truck" "tandt/train" 
 )
 
@@ -73,7 +67,7 @@ do
         capmax=1000000
     fi
 
-    # Entropy bottleneck from 25k
+    # Entropy bottleneck from 30k
     python train_compression.py --scene_name $scene_name \
     --config ./config/preset_configs/mcmc_compress_verylow.yaml \
     --model_path ./output/mcmc_compress/$scene_name/eb_0.005_from30k \
@@ -94,7 +88,7 @@ do
         --load_iteration 40000 --model mcmc \
         --compressor entropybottleneck
 
-    # Mean scale hyperprior from 25k
+    # Mean scale hyperprior from 30k
     python train_compression.py --scene_name $scene_name \
     --config ./config/preset_configs/mcmc_compress_verylow.yaml \
     --model_path ./output/mcmc_compress/$scene_name/ms_0.005_from30k \

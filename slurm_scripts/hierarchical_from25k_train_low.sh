@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH  --job-name=low
-#SBATCH  --output=/scratch_net/biwidl214/ecetin_scratch/renewed_repo/log/log-%j.out
-#SBATCH --error=/scratch_net/biwidl214/ecetin_scratch/renewed_repo/log/errors-%j.err
+#SBATCH  --output=/scratch_net/biwidl214/ecetin_scratch/GSCompression/log/log-%j.out
+#SBATCH --error=/scratch_net/biwidl214/ecetin_scratch/GSCompression/log/errors-%j.err
 #SBATCH  --gres=gpu:1
 #SBATCH  --cpus-per-task=4
 #SBATCH  --mem=30G
@@ -24,10 +24,6 @@ scene_names=(
     "mipnerf360/room" "mipnerf360/stump" "mipnerf360/treehill" \
     "db/playroom" "db/drjohnson"
 )
-
-# scene_names=( 
-#     "tandt/truck" "tandt/train" 
-# )
 
 for scene_name in "${scene_names[@]}"
 do
@@ -72,27 +68,6 @@ do
         capmax=1000000
     fi
 
-    # # Entropy bottleneck from 25k
-    # python train_compression.py --scene_name $scene_name \
-    # --config ./config/preset_configs/mcmc_compress_high.yaml \
-    # --model_path ./output/mcmc_compress/$scene_name/eb_0.0001_from25k \
-    # --model mcmc --cap_max $capmax \
-    # --compressor entropybottleneck \
-    # --extra_iterations 5000 \
-    # --checkpoint ./output/mcmc_radsplat/$scene_name/checkpoints/chkpnt25000.pth
-
-    # python test.py --scene_name $scene_name \
-    #     --config ./config/preset_configs/mcmc_compress_high.yaml \
-    #     --model_path ./output/mcmc_compress/$scene_name/eb_0.0001_from25k \
-    #     --load_iteration 30000 --model mcmc \
-    #     --compressor entropybottleneck
-
-    # python test.py --scene_name $scene_name \
-    #     --config ./config/preset_configs/mcmc_compress.yaml \
-    #     --model_path ./output/mcmc_compress/$scene_name/eb_0.001_from25k \
-    #     --load_iteration 40000 --model mcmc \
-    #     --compressor entropybottleneck
-
     # Mean scale hyperprior from 25k
     python train_compression.py --scene_name $scene_name \
     --config ./config/preset_configs/hierarchical_mcmc_gaussian_low.yaml \
@@ -108,43 +83,5 @@ do
         --model_path ./output/mcmc_compress/$scene_name/hierarchical_0.005_from25k_freeze \
         --load_iteration 30000 --model complete \
         --compressor meanscale
-
-    # # Mean scale hyperprior from 25k
-    # python train_compression.py --scene_name $scene_name \
-    # --config ./config/preset_configs/mcmc_compress.yaml \
-    # --model_path ./output/mcmc_compress/$scene_name/ms_0.001_from25k_freeze_measure \
-    # --model mcmc --cap_max $capmax \
-    # --compressor meanscale \
-    # --extra_iterations 5000 \
-    # --freeze_geometry \
-    # --checkpoint ./output/mcmc_radsplat/$scene_name/checkpoints/chkpnt25000.pth
-
-    # python test.py --scene_name $scene_name \
-    #     --config ./config/preset_configs/mcmc_compress.yaml \
-    #     --model_path ./output/mcmc_compress/$scene_name/ms_0.001_from25k_freeze_measure \
-    #     --load_iteration 30000 --model mcmc \
-    #     --compressor meanscale
-
-    # # Mean scale hyperprior from 25k
-    # python train_compression.py --scene_name $scene_name \
-    # --config ./config/preset_configs/mcmc_compress_high.yaml \
-    # --model_path ./output/mcmc_compress/$scene_name/ms_0.0001_from25k_freeze_measure \
-    # --model mcmc --cap_max $capmax \
-    # --compressor meanscale \
-    # --extra_iterations 5000 \
-    # --freeze_geometry \
-    # --checkpoint ./output/mcmc_radsplat/$scene_name/checkpoints/chkpnt25000.pth
-
-    # python test.py --scene_name $scene_name \
-    #     --config ./config/preset_configs/mcmc_compress_high.yaml \
-    #     --model_path ./output/mcmc_compress/$scene_name/ms_0.0001_from25k_freeze_measure \
-    #     --load_iteration 30000 --model mcmc \
-    #     --compressor meanscale
-
-    # # python test.py --scene_name $scene_name \
-    # #     --config ./config/preset_configs/mcmc_compress.yaml \
-    # #     --model_path ./output/mcmc_compress/$scene_name/ms_0.001_from25k \
-    # #     --load_iteration 40000 --model mcmc \
-    # #     --compressor meanscale
 
 done

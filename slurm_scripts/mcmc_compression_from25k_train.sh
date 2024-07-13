@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH  --job-name=mcmc_train
-#SBATCH  --output=/scratch_net/biwidl214/ecetin_scratch/renewed_repo/log/log-%j.out
-#SBATCH --error=/scratch_net/biwidl214/ecetin_scratch/renewed_repo/log/errors-%j.err
+#SBATCH  --output=/scratch_net/biwidl214/ecetin_scratch/GSCompression/log/log-%j.out
+#SBATCH --error=/scratch_net/biwidl214/ecetin_scratch/GSCompression/log/errors-%j.err
 #SBATCH  --gres=gpu:1
 #SBATCH  --cpus-per-task=4
 #SBATCH  --mem=30G
@@ -12,20 +12,16 @@
 #SBATCH  --constraint='a6000'
 
 # echo "Starting job"
-cd /scratch_net/biwidl214/ecetin_scratch/renewed_repo
+cd /scratch_net/biwidl214/ecetin_scratch/GSCompression
 source /scratch_net/biwidl214/ecetin/conda/etc/profile.d/conda.sh
 conda activate gscodec
 
 # From here, it's just what you executed in srun
-# ( 
-#     "mipnerf360/bicycle" "mipnerf360/bonsai" "mipnerf360/counter" \
-#     "mipnerf360/flowers" "mipnerf360/garden" "mipnerf360/kitchen" \
-#     "mipnerf360/room" "mipnerf360/stump" "mipnerf360/treehill" \
-#     "db/playroom" "db/drjohnson" \
-#     "tandt/truck" "tandt/train" 
-# )
-
 scene_names=( 
+    "mipnerf360/bicycle" "mipnerf360/bonsai" "mipnerf360/counter" \
+    "mipnerf360/flowers" "mipnerf360/garden" "mipnerf360/kitchen" \
+    "mipnerf360/room" "mipnerf360/stump" "mipnerf360/treehill" \
+    "db/playroom" "db/drjohnson" \
     "tandt/truck" "tandt/train" 
 )
 
@@ -140,11 +136,5 @@ do
         --model_path ./output/mcmc_compress/$scene_name/ms_0.0001_from25k_freeze_measure \
         --load_iteration 30000 --model mcmc \
         --compressor meanscale
-
-    # python test.py --scene_name $scene_name \
-    #     --config ./config/preset_configs/mcmc_compress.yaml \
-    #     --model_path ./output/mcmc_compress/$scene_name/ms_0.001_from25k \
-    #     --load_iteration 40000 --model mcmc \
-    #     --compressor meanscale
 
 done

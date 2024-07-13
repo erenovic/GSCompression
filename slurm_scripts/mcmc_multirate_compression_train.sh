@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH  --job-name=mcmc_train
-#SBATCH  --output=/scratch_net/biwidl214/ecetin_scratch/renewed_repo/log/log-%j.out
-#SBATCH --error=/scratch_net/biwidl214/ecetin_scratch/renewed_repo/log/errors-%j.err
+#SBATCH  --output=/scratch_net/biwidl214/ecetin_scratch/GSCompression/log/log-%j.out
+#SBATCH --error=/scratch_net/biwidl214/ecetin_scratch/GSCompression/log/errors-%j.err
 #SBATCH  --gres=gpu:1
 #SBATCH  --cpus-per-task=4
 #SBATCH  --mem=30G
@@ -12,7 +12,7 @@
 #SBATCH  --constraint='a6000'
 
 # echo "Starting job"
-cd /scratch_net/biwidl214/ecetin_scratch/renewed_repo
+cd /scratch_net/biwidl214/ecetin_scratch/GSCompression
 source /scratch_net/biwidl214/ecetin/conda/etc/profile.d/conda.sh
 conda activate gscodec
 
@@ -69,27 +69,6 @@ do
         capmax=1000000
     fi
 
-    # # Entropy bottleneck from 25k
-    # python train_compression.py --scene_name $scene_name \
-    # --config ./config/preset_configs/mcmc_multirate_gaussian.yaml \
-    # --model_path ./output/mcmc_compress/$scene_name/eb_multirate_from25k \
-    # --model mcmc --cap_max $capmax \
-    # --compressor entropybottleneck \
-    # --extra_iterations 10000 \
-    # --checkpoint ./output/mcmc_radsplat/$scene_name/checkpoints/chkpnt30000.pth
-
-    # python test.py --scene_name $scene_name \
-    #     --config ./config/preset_configs/mcmc_multirate_gaussian.yaml \
-    #     --model_path ./output/mcmc_compress/$scene_name/eb_multirate_from25k \
-    #     --load_iteration 35000 --model mcmc \
-    #     --compressor entropybottleneck
-
-    # python test.py --scene_name $scene_name \
-    #     --config ./config/preset_configs/mcmc_multirate_gaussian.yaml \
-    #     --model_path ./output/mcmc_compress/$scene_name/eb_multirate_from25k \
-    #     --load_iteration 40000 --model mcmc \
-    #     --compressor entropybottleneck
-
     # Mean scale hyperprior from 25k
     python train_compression.py --scene_name $scene_name \
     --config ./config/preset_configs/mcmc_multirate_gaussian.yaml \
@@ -105,11 +84,5 @@ do
         --model_path ./output/mcmc_compress/$scene_name/ms_multirate_from25k_freeze \
         --load_iteration 30000 --model mcmc \
         --compressor meanscale
-
-    # python test.py --scene_name $scene_name \
-    #     --config ./config/preset_configs/mcmc_multirate_gaussian.yaml \
-    #     --model_path ./output/mcmc_compress/$scene_name/ms_multirate_from25k \
-    #     --load_iteration 40000 --model mcmc \
-    #     --compressor meanscale
 
 done
