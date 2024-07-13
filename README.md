@@ -156,6 +156,7 @@ As important components of this codebase, we have the following important folder
     - `compression`: Contains the training scripts for compression models.
         - `training_base.py`: Contains the base training script for 3D-GS model with the entropy model of choice.
         - `training_mcmc.py`: Contains the training script for 3D-MCMC Gaussian splatting models with the entropy model of choice.
+        - `training_complete.py`: Contains the training script for entropy model training with the hierarchical structure and residual coding.
     - `training_base.py`: Contains the training script for base 3D-GS model.
     - `training_masked.py`: Contains the training script for masked Gaussian splatting models.
     - `training_masked_mcmc.py`: Contains the training script for masked 3D-MCMC Gaussian splatting models. 
