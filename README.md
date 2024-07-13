@@ -31,7 +31,7 @@ pip install submodules/simple-knn
 pip install submodules/build_octree
 ```
 
-As an addition to the regular packages `diff-gaussian-rasterization`, and `simple-knn`, we have added the `build_octree` package to the submodules. This package is used for building an octree structure for the hierarchical Gaussian splatting compression experiments.
+As an addition to the regular packages `diff-gaussian-rasterization`, and `simple-knn`, we have added the `build_octree` package to the submodules. This package is used for building an octree structure for the hierarchical Gaussian splatting compression experiments. For installing all these packages, make sure that CUDA is available during environment setup.
 
 ## Datasets
 
