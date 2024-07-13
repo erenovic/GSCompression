@@ -1,3 +1,4 @@
+import logging
 import math
 from argparse import Namespace
 from typing import Dict, List
@@ -8,24 +9,16 @@ import torch.nn.functional as F
 from compressai.entropy_models import EntropyBottleneck, GaussianConditional
 from compressai.layers import GDN
 from compressai.models import CompressionModel
-import logging
 
 from models.compression.base_model import BaseCompressor
-from models.splatting.hierarchical.hierarchy_utils import (
-    aggregate_gaussians_recursively,
-    assign_unique_values,
-    build_octree,
-    calculate_weights,
-    AggregationFunction
-)
+from models.splatting.hierarchical.hierarchy_utils import (AggregationFunction,
+                                                           aggregate_gaussians_recursively,
+                                                           assign_unique_values, build_octree,
+                                                           calculate_weights)
 from models.splatting.mcmc_model import GaussianModel
-from utils.general_utils import (
-    build_covariance_from_scaling_rotation,
-    build_rotation,
-    conjugate_quaternion,
-    pack_full_to_lower_triangular,
-    unpack_lower_triangular_to_full,
-)
+from utils.general_utils import (build_covariance_from_scaling_rotation, build_rotation,
+                                 conjugate_quaternion, pack_full_to_lower_triangular,
+                                 unpack_lower_triangular_to_full)
 
 
 class CodecNet(CompressionModel):
@@ -408,7 +401,7 @@ class ConditionalGSCodec(CompressionModel):
                 gaussians.active_sh_degree,
             )
 
-        num_cubes = 2 ** chosen_depth
+        num_cubes = 2**chosen_depth
         node_assignments = build_octree(gaussians.get_xyz, num_cubes)
 
         mu = gaussians.get_xyz.contiguous()
@@ -436,33 +429,42 @@ class ConditionalGSCodec(CompressionModel):
         # Aggregate weights
         node_weights = torch.zeros(num_nodes, 1).cuda()
         node_weights.scatter_add_(0, node_assignments.unsqueeze(1), weights)
-        
+
         # Aggregate means
         _gaussian_means = weights * mu
         node_xyzs = torch.zeros(num_nodes, _gaussian_means.shape[1]).cuda()
-        node_xyzs = node_xyzs.scatter_add(
-            0, 
-            node_assignments.unsqueeze(1).expand(-1, _gaussian_means.shape[1]), 
-            _gaussian_means
-        ) / node_weights
+        node_xyzs = (
+            node_xyzs.scatter_add(
+                0,
+                node_assignments.unsqueeze(1).expand(-1, _gaussian_means.shape[1]),
+                _gaussian_means,
+            )
+            / node_weights
+        )
 
         # Aggregate scaling
         _gaussian_scaling = weights * scaling
         node_scaling = torch.zeros(num_nodes, _gaussian_scaling.shape[1]).cuda()
-        node_scaling = node_scaling.scatter_add(
-            0,
-            node_assignments.unsqueeze(1).expand(-1, _gaussian_scaling.shape[1]),
-            _gaussian_scaling
-        ) / node_weights
+        node_scaling = (
+            node_scaling.scatter_add(
+                0,
+                node_assignments.unsqueeze(1).expand(-1, _gaussian_scaling.shape[1]),
+                _gaussian_scaling,
+            )
+            / node_weights
+        )
 
         # Aggregate rotation
         _gaussian_rotation = weights * rotation
         node_rotation = torch.zeros(num_nodes, _gaussian_rotation.shape[1]).cuda()
-        node_rotation = node_rotation.scatter_add(
-            0,
-            node_assignments.unsqueeze(1).expand(-1, _gaussian_rotation.shape[1]),
-            _gaussian_rotation
-        ) / node_weights
+        node_rotation = (
+            node_rotation.scatter_add(
+                0,
+                node_assignments.unsqueeze(1).expand(-1, _gaussian_rotation.shape[1]),
+                _gaussian_rotation,
+            )
+            / node_weights
+        )
 
         # Aggregate sigma
         _gaussian_sigma = weights * sigma
@@ -474,29 +476,36 @@ class ConditionalGSCodec(CompressionModel):
         _gaussian_sigma = _gaussian_sigma + weights * diff_mu_vector
 
         node_sigma = torch.zeros(num_nodes, _gaussian_sigma.shape[1]).cuda()
-        node_sigma = node_sigma.scatter_add(
-            0,
-            node_assignments.unsqueeze(1).expand(-1, _gaussian_sigma.shape[1]),
-            _gaussian_sigma
-        ) / node_weights
+        node_sigma = (
+            node_sigma.scatter_add(
+                0,
+                node_assignments.unsqueeze(1).expand(-1, _gaussian_sigma.shape[1]),
+                _gaussian_sigma,
+            )
+            / node_weights
+        )
 
         # Aggregate opacity
         _gaussian_opacity = weights * opacity
         node_opacity = torch.zeros(num_nodes, 1).cuda()
-        node_opacity = node_opacity.scatter_add(
-            0,
-            node_assignments.unsqueeze(1).expand(-1, _gaussian_opacity.shape[1]),
-            _gaussian_opacity
-        ) / node_weights
+        node_opacity = (
+            node_opacity.scatter_add(
+                0,
+                node_assignments.unsqueeze(1).expand(-1, _gaussian_opacity.shape[1]),
+                _gaussian_opacity,
+            )
+            / node_weights
+        )
 
         # Aggregate SH
         _gaussian_shs = weights * sh.view(sh.shape[0], -1)
         node_shs = torch.zeros(num_nodes, _gaussian_shs.shape[1]).cuda()
-        node_shs = node_shs.scatter_add(
-            0,
-            node_assignments.unsqueeze(1).expand(-1, _gaussian_shs.shape[1]),
-            _gaussian_shs
-        ) / node_weights
+        node_shs = (
+            node_shs.scatter_add(
+                0, node_assignments.unsqueeze(1).expand(-1, _gaussian_shs.shape[1]), _gaussian_shs
+            )
+            / node_weights
+        )
 
         return (
             node_xyzs,
@@ -505,7 +514,7 @@ class ConditionalGSCodec(CompressionModel):
             node_sigma,
             node_shs.view(node_shs.shape[0], -1, 3),
             node_opacity,
-            node_assignments.type(torch.int32)
+            node_assignments.type(torch.int32),
         )
 
     def apply_warping(self, x_prev: torch.Tensor, warping_params: torch.Tensor) -> torch.Tensor:
@@ -534,11 +543,10 @@ class ConditionalGSCodec(CompressionModel):
         # )
         # warped_output[:, 3:6] = warped_scale
         # warped_output[:, 6:10] = warped_quaternion
-        
+
         warped_output[:, 3:6] = torch.abs(scale + x_prev[:, 3:6])
-        warped_output[:, 6:10] = torch.nn.functional.normalize(
-            quaternion + x_prev[:, 6:10])
-        
+        warped_output[:, 6:10] = torch.nn.functional.normalize(quaternion + x_prev[:, 6:10])
+
         # print(additive_position.min(), additive_position.max())
         # print(warped_scale.min(), warped_scale.max())
         # print(warped_quaternion.min(), warped_quaternion.max())
@@ -547,7 +555,7 @@ class ConditionalGSCodec(CompressionModel):
         # breakpoint()
 
         warped_output[:, :3] = x_prev[:, :3] + additive_position
-       
+
         warped_output[:, 10:11] = x_prev[:, 10:11] + additive_opacity
         warped_output[:, 11:] = x_prev[:, 11:] + additive_sh
 

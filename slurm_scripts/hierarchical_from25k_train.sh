@@ -12,7 +12,7 @@
 #SBATCH  --constraint='a6000'
 
 # echo "Starting job"
-cd /scratch_net/biwidl214/ecetin_scratch/renewed_repo
+cd /scratch_net/biwidl214/ecetin_scratch/GSCompression
 source /scratch_net/biwidl214/ecetin/conda/etc/profile.d/conda.sh
 conda activate gscodec
 

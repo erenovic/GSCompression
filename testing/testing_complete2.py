@@ -13,10 +13,11 @@ from tqdm import tqdm
 
 from gaussian_renderer.covariance_renderer import render
 from models.compression.multirate_complete_eb import CompleteEntropyBottleneck
-from models.compression.multirate_complete_ms import CompleteMeanScaleHyperprior
+from models.compression.multirate_complete_ms2 import CompleteMeanScaleHyperprior
 from models.splatting.hierarchical.hierarchy_utils import choose_min_max_depth
 from scene import Scene
-from utils.general_utils import apply_cholesky, apply_inverse_cholesky, make_psd, apply_rotation_and_scaling
+from utils.general_utils import (apply_cholesky, apply_inverse_cholesky, apply_rotation_and_scaling,
+                                 make_psd)
 
 
 def render_set(
@@ -111,8 +112,9 @@ def render_set(
             f"The size of the node assignments is: {node_assignment_size} MBytes in level {level}"
         )
 
+        gaussian_params_size = intra_params_size + inter_params_size
         logging.info(
-            f"Total size: {intra_params_size + inter_params_size + xyz_size + model_size + node_assignment_size} MBytes in level {level}"
+            f"Total size: {gaussian_params_size + xyz_size + model_size + node_assignment_size} MBytes in level {level}"
         )
 
         t_list = []
@@ -151,7 +153,7 @@ def render_set(
     return gaussians.get_xyz.shape[0], folder_names, gts_path
 
 
-def compress_all(compressor, gaussians, folder: Path, level):
+def compress_all(compressor: CompleteMeanScaleHyperprior, gaussians, folder: Path, level):
 
     copy_compressor = copy.deepcopy(compressor)
 
@@ -181,6 +183,7 @@ def compress_all(compressor, gaussians, folder: Path, level):
 
     intra_input = torch.cat(
         (
+            # mean3D,
             covariance_L,
             opacity,
             shs.view(-1, 3 * ((gaussians.max_sh_degree + 1) ** 2)),
@@ -189,7 +192,8 @@ def compress_all(compressor, gaussians, folder: Path, level):
     )
 
     intra_compress_result_dict = compressor.compress_intra(
-        intra_input, level=level,
+        intra_input,
+        level=level,
     )
     decompressed_attrs = compressor.decompress_intra(
         intra_compress_result_dict["bitstrings"],
@@ -197,12 +201,17 @@ def compress_all(compressor, gaussians, folder: Path, level):
         level=intra_compress_result_dict["level"],
     )
 
+    # agg_test_position = decompressed_attrs[:, :3]
+    # agg_test_covariance = apply_inverse_cholesky(decompressed_attrs[:, 3:9])
+    # agg_test_opacity = torch.clamp(decompressed_attrs[:, 9:10], 0, 1)
+    # agg_test_shs = decompressed_attrs[:, 10:].view(decompressed_attrs.shape[0], -1, 3)
+
     agg_test_position = mean3D.clone()
     agg_test_covariance = apply_inverse_cholesky(decompressed_attrs[:, :6])
     agg_test_opacity = torch.clamp(decompressed_attrs[:, 6:7], 0, 1)
     agg_test_shs = decompressed_attrs[:, 7:].view(decompressed_attrs.shape[0], -1, 3)
 
-    res_position, res_scaling, res_rotation, res_shs, res_opacity = compressor.get_residuals(
+    res_position, res_covariance, res_shs, res_opacity = compressor.get_residuals(
         gaussians.get_xyz[sorted_indices],
         gaussians.get_covariance()[sorted_indices],
         gaussians.get_features[sorted_indices],
@@ -210,14 +219,13 @@ def compress_all(compressor, gaussians, folder: Path, level):
         agg_test_position[sorted_node_assignments],
         agg_test_covariance[sorted_node_assignments],
         agg_test_shs[sorted_node_assignments],
-        agg_test_opacity[sorted_node_assignments]
+        agg_test_opacity[sorted_node_assignments],
     )
 
     inter_input = torch.cat(
         (
             res_position,
-            res_scaling,
-            res_rotation,
+            res_covariance,
             res_opacity,
             res_shs.view(-1, 3 * ((gaussians.max_sh_degree + 1) ** 2)),
         ),
@@ -225,7 +233,8 @@ def compress_all(compressor, gaussians, folder: Path, level):
     )
 
     inter_compress_result_dict = compressor.compress_inter(
-        inter_input, level=level,
+        inter_input,
+        level=level,
     )
 
     # 1. Save the compressed gaussian primitives
@@ -248,8 +257,8 @@ def compress_all(compressor, gaussians, folder: Path, level):
 
     torch.save(model_params, model_path)
 
-    # # 3. Save the xyz as a pth file (after quantization)
-    np.savez_compressed(xyz_path, xyz=mean3D.cpu().numpy())
+    # 3. Save mean3D
+    np.savez_compressed(f"{xyz_path}", xyz=mean3D.type(torch.float16).cpu().numpy())
 
 
 def decompress_all(actual_model, dataset: Namespace, folder: Path, level):
@@ -276,8 +285,6 @@ def decompress_all(actual_model, dataset: Namespace, folder: Path, level):
             inter_loaded_bitstrings.append([file.read()])
 
     loaded_model_params = torch.load(model_path)
-
-    mean3D = torch.Tensor(np.load(xyz_path)["xyz"]).type(torch.float32).cuda()
 
     # TODO: Choose the compressor type
     if len(intra_loaded_bitstrings) == 1:
@@ -308,21 +315,24 @@ def decompress_all(actual_model, dataset: Namespace, folder: Path, level):
         inter_loaded_bitstrings, size=[loaded_model_params[3]], level=level
     )
 
-    agg_test_covariance = apply_inverse_cholesky(intra_decompressed_attrs[:, :6])
-    test_opacity = torch.clamp(
-        intra_decompressed_attrs[node_assignments, 6:7] + inter_decompressed_attrs[:, 10:11], 
-        0, 1
-    )
-    agg_test_shs = intra_decompressed_attrs[:, 7:].view(intra_decompressed_attrs.shape[0], -1, 3)
+    mean3D = torch.Tensor(np.load(xyz_path)["xyz"]).type(torch.float32).cuda()
+    agg_covs = apply_inverse_cholesky(intra_decompressed_attrs[:, :6])
+    agg_opacity = intra_decompressed_attrs[:, 6:7]
+    agg_shs = intra_decompressed_attrs[:, 7:].view(-1, ((loaded_model_params[-1] + 1) ** 2), 3)
+
+    # mean3D = intra_decompressed_attrs[node_assignments, :3]
+    # agg_covs = apply_inverse_cholesky(intra_decompressed_attrs[node_assignments, 3:9])
+    # agg_opacity = intra_decompressed_attrs[node_assignments, 9:10]
+    # agg_shs = intra_decompressed_attrs[node_assignments, 10:].view(
+    #     -1, ((loaded_model_params[-1] + 1) ** 2), 3
+    # )
+
     return {
         "position": mean3D[node_assignments] + inter_decompressed_attrs[:, :3],
-        "covariance": make_psd(
-            apply_rotation_and_scaling(
-                agg_test_covariance[node_assignments],
-                torch.abs(inter_decompressed_attrs[:, 3:6]),
-                torch.nn.functional.normalize(inter_decompressed_attrs[:, 6:10]),
-            )
+        "covariance": make_psd(agg_covs[node_assignments] + inter_decompressed_attrs[:, 3:9]),
+        "opacity": torch.clamp(
+            agg_opacity[node_assignments] + inter_decompressed_attrs[:, 9:10], 0, 1
         ),
-        "opacity": test_opacity,
-        "features": agg_test_shs + inter_decompressed_attrs[:, 11:].view(-1, 3 * ((loaded_model_params[-1] + 1) ** 2)),
+        "features": agg_shs[node_assignments]
+        + inter_decompressed_attrs[:, 10:].view(-1, ((loaded_model_params[-1] + 1) ** 2), 3),
     }, loaded_model_params[-1]

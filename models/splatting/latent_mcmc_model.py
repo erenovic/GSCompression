@@ -23,13 +23,8 @@ from simple_knn._C import distCUDA2
 from torch import nn
 from tqdm import tqdm
 
-from utils.general_utils import (
-    build_rotation,
-    build_scaling_rotation,
-    get_expon_lr_func,
-    inverse_sigmoid,
-    strip_symmetric,
-)
+from utils.general_utils import (build_rotation, build_scaling_rotation, get_expon_lr_func,
+                                 inverse_sigmoid, strip_symmetric)
 from utils.graphics_utils import BasicPointCloud
 from utils.loss_utils import l2_loss
 from utils.reloc_utils import compute_relocation_cuda

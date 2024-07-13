@@ -20,15 +20,9 @@ from PIL import Image
 from plyfile import PlyData, PlyElement
 
 from models.splatting.base_model import BasicPointCloud
-from scene.colmap_loader import (
-    qvec2rotmat,
-    read_extrinsics_binary,
-    read_extrinsics_text,
-    read_intrinsics_binary,
-    read_intrinsics_text,
-    read_points3D_binary,
-    read_points3D_text,
-)
+from scene.colmap_loader import (qvec2rotmat, read_extrinsics_binary, read_extrinsics_text,
+                                 read_intrinsics_binary, read_intrinsics_text, read_points3D_binary,
+                                 read_points3D_text)
 from utils.graphics_utils import focal2fov, fov2focal, getWorld2View2
 from utils.sh_utils import SH2RGB
 

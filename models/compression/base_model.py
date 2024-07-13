@@ -4,9 +4,9 @@ from argparse import Namespace
 from typing import Dict, List, Tuple
 
 import torch
-from torch import Tensor
 import torch.nn as nn
 from compressai.models import CompressionModel
+from torch import Tensor
 from torch.optim.optimizer import Optimizer
 
 

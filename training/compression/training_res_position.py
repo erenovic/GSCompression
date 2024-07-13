@@ -21,12 +21,12 @@ from gaussian_renderer import get_max_alphas
 from gaussian_renderer import render as base_renderer
 from gaussian_renderer.compression_renderer import render as compression_renderer
 from models.compression.compression_utils import get_size_in_bits
+from models.splatting.hierarchical.hierarchy_utils import choose_min_max_depth
 from models.splatting.mcmc_model import GaussianModel
 from scene import Scene
 from training.training_utils import bump_iterations_for_secondary_training
 from utils.general_utils import build_scaling_rotation
 from utils.loss_utils import l1_loss, ssim
-from models.splatting.hierarchical.hierarchy_utils import choose_min_max_depth
 
 
 def freeze_geometry(gaussians, dataset):

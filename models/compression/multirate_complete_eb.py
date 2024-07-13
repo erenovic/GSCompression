@@ -8,12 +8,9 @@ from compressai import entropy_models
 from compressai.models import CompressionModel
 
 from models.splatting.base_model import GaussianModel
-from models.splatting.hierarchical.hierarchy_utils import (
-    aggregate_gaussians_recursively,
-    assign_unique_values,
-    build_octree,
-    calculate_weights,
-)
+from models.splatting.hierarchical.hierarchy_utils import (aggregate_gaussians_recursively,
+                                                           assign_unique_values, build_octree,
+                                                           calculate_weights)
 
 
 class MultiRateEntropyBottleneck(CompressionModel):

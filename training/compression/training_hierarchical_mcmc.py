@@ -22,22 +22,15 @@ from gaussian_renderer import get_max_alphas
 from gaussian_renderer import render as gaussian_render
 from gaussian_renderer.covariance_renderer import render as render
 from models.compression.compression_utils import get_size_in_bits
-from models.splatting.hierarchical.hierarchy_utils import (
-    aggregate_gaussians_recursively,
-    assign_unique_values,
-    build_octree,
-    calculate_weights,
-    choose_min_max_depth
-)
+from models.splatting.hierarchical.hierarchy_utils import (aggregate_gaussians_recursively,
+                                                           assign_unique_values, build_octree,
+                                                           calculate_weights, choose_min_max_depth)
 from models.splatting.mcmc_model import GaussianModel
 from scene import Scene
 from scene.cameras import Camera
 from training.training_utils import bump_iterations_for_secondary_training
-from utils.general_utils import (
-    build_rotation,
-    compute_required_rotation_and_scaling,
-    transform_covariance_matrix,
-)
+from utils.general_utils import (build_rotation, compute_required_rotation_and_scaling,
+                                 transform_covariance_matrix)
 from utils.loss_utils import l1_loss, l2_loss, ssim
 
 

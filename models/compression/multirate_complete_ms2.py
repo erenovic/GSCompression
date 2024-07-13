@@ -8,13 +8,10 @@ from compressai.entropy_models import EntropyBottleneck, GaussianConditional
 from compressai.models import CompressionModel
 
 from models.splatting.base_model import GaussianModel
-from models.splatting.hierarchical.hierarchy_utils import (
-    aggregate_gaussians_recursively,
-    assign_unique_values,
-    build_octree,
-    calculate_weights,
-)
-from utils.general_utils import compute_required_rotation_and_scaling
+from models.splatting.hierarchical.hierarchy_utils import (aggregate_gaussians_recursively,
+                                                           assign_unique_values, build_octree,
+                                                           calculate_weights)
+from utils.general_utils import compute_required_rotation_and_scaling, pack_full_to_lower_triangular
 
 
 class MultiRateMeanScaleHyperprior(CompressionModel):
@@ -97,27 +94,6 @@ class MultiRateMeanScaleHyperprior(CompressionModel):
         message = self.load_state_dict(state)
         return message
 
-    def init_normalization_params(self, gaussians: GaussianModel):
-        """Initialize the normalization parameters for the mean and std values."""
-        spherical_harmonics_reshaped = gaussians.get_features.flatten(1, 2)
-
-        if self.M == 55:
-            attrs_to_compress = torch.cat(
-                (
-                    gaussians.get_covariance(),
-                    gaussians.get_opacity,
-                    spherical_harmonics_reshaped
-                ),
-                dim=1,
-            )
-
-            # Normalize the attributes using mean and std
-            self.mean_vals = nn.Parameter(attrs_to_compress.mean(0, keepdim=True), requires_grad=False)
-            self.std_vals = nn.Parameter(attrs_to_compress.std(0, keepdim=True), requires_grad=False)
-        elif self.M == 58:
-            self.mean_vals = nn.Parameter(torch.zeros(1, self.M, device=self.scale.device), requires_grad=False)
-            self.std_vals = nn.Parameter(torch.ones(1, self.M, device=self.scale.device), requires_grad=False)
-            
     def training_setup(self, optimization_args: Namespace):
         """Set up the optimizer for the entropy bottleneck compressor."""
         l = [
@@ -380,7 +356,7 @@ class CompleteMeanScaleHyperprior(nn.Module):
         self.n_quant_levels = n_levels
 
         intra_M = (3 * ((dataset.sh_degree + 1) ** 2)) + 0 + 6 + 1
-        inter_M = (3 * ((dataset.sh_degree + 1) ** 2)) + 3 + 3 + 4 + 1
+        inter_M = (3 * ((dataset.sh_degree + 1) ** 2)) + 3 + 6 + 1
 
         self.intra_compressor = MultiRateMeanScaleHyperprior(
             dataset, intra_M, N, n_levels, scale_mag=100, extra_pos_scale=True, with_positions=False
@@ -412,18 +388,11 @@ class CompleteMeanScaleHyperprior(nn.Module):
                 "name": "inter_compressor_params",
             },
             {
-                "params": [
-                    p
-                    for n, p in self.intra_compressor.named_parameters()
-                    if "scale" in n
-                ] + [
-                    p
-                    for n, p in self.inter_compressor.named_parameters()
-                    if "scale" in n
-                ],
+                "params": [p for n, p in self.intra_compressor.named_parameters() if "scale" in n]
+                + [p for n, p in self.inter_compressor.named_parameters() if "scale" in n],
                 "lr": 0.1,
                 "name": "scale_params",
-            }
+            },
         ]
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
 
@@ -509,6 +478,143 @@ class CompleteMeanScaleHyperprior(nn.Module):
             (torch.log(likelihoods).sum() / (-math.log(2)))
             for likelihoods in y_likelihoods.values()
         )
+
+    # def get_cut_attributes(
+    #     self,
+    #     gaussians: GaussianModel,
+    #     chosen_depth: int,
+    #     max_depth: int,
+    # ):
+    #     import build_octree as hierarchy_generation
+    #     assert chosen_depth <= max_depth, "Chosen depth must be less than or equal to max depth"
+
+    #     if chosen_depth == -1:
+    #         return (
+    #             gaussians.get_xyz,
+    #             gaussians.get_features,
+    #             gaussians.get_covariance(),
+    #             gaussians.get_opacity,
+    #             gaussians.active_sh_degree,
+    #         )
+
+    #     num_cubes = 2 ** chosen_depth
+    #     # node_assignments = build_octree(gaussians.get_xyz, num_cubes)
+
+    #     with torch.no_grad():
+    #         point3D = gaussians.get_xyz.contiguous()
+    #         aabb_min = torch.min(point3D, dim=0)[0]
+    #         aabb_max = torch.max(point3D, dim=0)[0]
+
+    #         box_d = aabb_max - aabb_min
+    #         box_min = (aabb_min - 0.01 * box_d).contiguous()
+    #         box_max = (aabb_max + 0.01 * box_d).contiguous()
+
+    #         cube_size = torch.max(box_max - box_min) / num_cubes
+
+    #         # Compute the grid indices for each point
+    #         indices = ((point3D - box_min) / cube_size).floor().long()
+
+    #         # Convert 3D indices to a unique group ID
+    #         # Assuming the grid extends only within the AABB:
+    #         grid_dim = ((box_max - box_min) / cube_size).ceil().long()
+    #         group_ids = indices[:, 0] + indices[:, 1] * grid_dim[0] + indices[:, 2] * grid_dim[0] * grid_dim[1]
+
+    #         _, node_assignments = torch.unique(group_ids, sorted=True, return_inverse=True)
+
+    #     mu = gaussians.get_xyz.contiguous()
+    #     scaling = gaussians.get_scaling.contiguous()
+    #     rotation = gaussians.get_rotation.contiguous()
+    #     sigma = gaussians.get_covariance().contiguous()
+    #     opacity = gaussians.get_opacity.contiguous()
+    #     sh = gaussians.get_features.contiguous()
+
+    #     weights = calculate_weights(sigma, opacity).contiguous()
+
+    #     # # Call function to perform aggregation
+    #     # node_xyzs, node_sigma, node_opacity, node_shs = AggregationFunction.apply(
+    #     #     weights,
+    #     #     mu,
+    #     #     sigma,
+    #     #     opacity,
+    #     #     sh.view(sh.shape[0], -1),
+    #     #     node_assignments.type(torch.int32),
+    #     # )
+
+    #     # Number of groups
+    #     num_nodes = torch.max(node_assignments).item() + 1
+
+    #     # Aggregate weights
+    #     node_weights = torch.zeros(num_nodes, 1).cuda()
+    #     node_weights.scatter_add_(0, node_assignments.unsqueeze(1), weights)
+
+    #     # Aggregate means
+    #     _gaussian_means = weights * mu
+    #     node_xyzs = torch.zeros(num_nodes, _gaussian_means.shape[1]).cuda()
+    #     node_xyzs = node_xyzs.scatter_add(
+    #         0,
+    #         node_assignments.unsqueeze(1).expand(-1, _gaussian_means.shape[1]),
+    #         _gaussian_means
+    #     ) / node_weights
+
+    #     # Aggregate scaling
+    #     _gaussian_scaling = weights * scaling
+    #     node_scaling = torch.zeros(num_nodes, _gaussian_scaling.shape[1]).cuda()
+    #     node_scaling = node_scaling.scatter_add(
+    #         0,
+    #         node_assignments.unsqueeze(1).expand(-1, _gaussian_scaling.shape[1]),
+    #         _gaussian_scaling
+    #     ) / node_weights
+
+    #     # Aggregate rotation
+    #     _gaussian_rotation = weights * rotation
+    #     node_rotation = torch.zeros(num_nodes, _gaussian_rotation.shape[1]).cuda()
+    #     node_rotation = node_rotation.scatter_add(
+    #         0,
+    #         node_assignments.unsqueeze(1).expand(-1, _gaussian_rotation.shape[1]),
+    #         _gaussian_rotation
+    #     ) / node_weights
+
+    #     # Aggregate sigma
+    #     _gaussian_sigma = weights * sigma
+    #     node_sigma = torch.zeros(num_nodes, _gaussian_sigma.shape[1]).cuda()
+
+    #     diff_mu = mu - node_xyzs[node_assignments]
+    #     diff_mu_outer = torch.einsum("ij,ik->ijk", diff_mu, diff_mu)
+    #     diff_mu_vector = pack_full_to_lower_triangular(diff_mu_outer)
+    #     _gaussian_sigma = _gaussian_sigma + weights * diff_mu_vector
+
+    #     node_sigma = torch.zeros(num_nodes, _gaussian_sigma.shape[1]).cuda()
+    #     node_sigma = node_sigma.scatter_add(
+    #         0,
+    #         node_assignments.unsqueeze(1).expand(-1, _gaussian_sigma.shape[1]),
+    #         _gaussian_sigma
+    #     ) / node_weights
+
+    #     # Aggregate opacity
+    #     _gaussian_opacity = weights * opacity
+    #     node_opacity = torch.zeros(num_nodes, 1).cuda()
+    #     node_opacity = node_opacity.scatter_add(
+    #         0,
+    #         node_assignments.unsqueeze(1).expand(-1, _gaussian_opacity.shape[1]),
+    #         _gaussian_opacity
+    #     ) / node_weights
+
+    #     # Aggregate SH
+    #     _gaussian_shs = weights * sh.view(sh.shape[0], -1)
+    #     node_shs = torch.zeros(num_nodes, _gaussian_shs.shape[1]).cuda()
+    #     node_shs = node_shs.scatter_add(
+    #         0,
+    #         node_assignments.unsqueeze(1).expand(-1, _gaussian_shs.shape[1]),
+    #         _gaussian_shs
+    #     ) / node_weights
+
+    #     return (
+    #         node_xyzs,
+    #         node_sigma,
+    #         node_shs.view(node_shs.shape[0], -1, 3),
+    #         node_opacity,
+    #         node_assignments.type(torch.int32)
+    #     )
 
     def get_cut_attributes(
         self,
@@ -613,17 +719,17 @@ class CompleteMeanScaleHyperprior(nn.Module):
         """
 
         residual_position = position - agg_xyz
-        residual_scaling, residual_rotation = compute_required_rotation_and_scaling(
-            agg_covariance, covariance
-        )
-        # residual_covariance = covariance - agg_covariance
+        # residual_scaling, residual_rotation = compute_required_rotation_and_scaling(
+        #     agg_covariance, covariance
+        # )
+        residual_covariance = covariance - agg_covariance
         residual_features = features - agg_features
         residual_opacities = opacity - agg_opacities
         return (
             residual_position,
-            residual_scaling,
-            residual_rotation,
-            # residual_covariance,
+            # residual_scaling,
+            # residual_rotation,
+            residual_covariance,
             residual_features,
             residual_opacities,
         )

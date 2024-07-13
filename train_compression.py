@@ -98,14 +98,25 @@ if __name__ == "__main__":
             "Radsplat model is not supported for compression training.\n"
             "Use mcmc for compression training."
         )
-    elif dataset.model == "hierarchical":
-        from training.compression.training_hierarchical_mcmc import training
     elif dataset.model == "complete":
         from training.compression.training_hierarchical_complete_mcmc import training
+    elif dataset.model == "hierarchical":
+        raise ValueError(
+            "Hierarchical model is not included in this repository.\n"
+            "Use mcmc for compression training."
+        )
     elif dataset.model == "latent":
-        from training.compression.training_latent_mcmc import training
+        # from training.compression.training_latent_mcmc import training
+        raise ValueError(
+            "Latent model is not included in this repository.\n"
+            "Use mcmc for compression training."
+        )
     elif dataset.model == "gscodec":
-        from training.compression.training_gscodec import training
+        # from training.compression.training_gscodec import training
+        raise ValueError(
+            "GSCodec model is not included in this repository.\n"
+            "Use mcmc for compression training."
+        )
     else:
         raise ValueError(f"Unknown model type: {dataset.model}")
 

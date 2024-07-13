@@ -30,10 +30,8 @@ from utils.loss_utils import l1_loss, ssim
 class LatentRepresentations(torch.nn.Module):
     def __init__(self, gaussians):
         super(LatentRepresentations, self).__init__()
-        
-        self.latents = torch.nn.Parameter(
-            torch.randn(gaussians._xyz.shape[0], 32, device="cuda")
-        )
+
+        self.latents = torch.nn.Parameter(torch.randn(gaussians._xyz.shape[0], 32, device="cuda"))
 
         self.mlp_opacity = torch.nn.Sequential(
             torch.nn.Linear(32, 32),
@@ -57,10 +55,11 @@ class LatentRepresentations(torch.nn.Module):
             torch.nn.ReLU(),
             torch.nn.Linear(32, 4),
         )
-    
+
     def training_setup(self):
         self.optimizer = torch.optim.Adam(
-            self.parameters(), lr=0.01,
+            self.parameters(),
+            lr=0.01,
         )
 
     def forward(self, indices):
@@ -69,14 +68,14 @@ class LatentRepresentations(torch.nn.Module):
         scaling = torch.exp(self.mlp_scaling(self.latents[indices]))
         rotation = torch.nn.functional.normalize(self.mlp_rotation(self.latents[indices]))
         return scaling, rotation, sh, opacity
-    
+
     def optimize_latents(self, gaussians, scene, pipeline, bg):
         indices = torch.arange(gaussians._xyz.shape[0], device="cuda")
-        
+
         for _ in tqdm(range(1000)):
             self.optimizer.zero_grad()
             scales, rotations, shs, opacities = self(indices)
-            
+
             loss = (
                 l1_loss(opacities, gaussians.get_opacity[indices])
                 + l1_loss(scales, gaussians.get_scaling[indices])
@@ -85,13 +84,13 @@ class LatentRepresentations(torch.nn.Module):
             )
             loss.backward()
             self.optimizer.step()
-        
+
         viewpoint_stack = None
 
         for _ in tqdm(range(1000)):
             self.optimizer.zero_grad()
             scales, rotations, shs, opacities = self(indices)
-            
+
             # Pick a random Camera
             if not viewpoint_stack:
                 viewpoint_stack = scene.getTrainCameras().copy()
@@ -190,7 +189,7 @@ def training(
             raise ValueError("Invalid checkpoint format")
 
         gaussians.restore(model_params, optimization)
-        
+
         latents = LatentRepresentations(gaussians).cuda()
         latents.training_setup()
 

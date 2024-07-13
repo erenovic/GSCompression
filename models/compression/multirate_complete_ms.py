@@ -8,12 +8,9 @@ from compressai.entropy_models import EntropyBottleneck, GaussianConditional
 from compressai.models import CompressionModel
 
 from models.splatting.base_model import GaussianModel
-from models.splatting.hierarchical.hierarchy_utils import (
-    aggregate_gaussians_recursively,
-    assign_unique_values,
-    build_octree,
-    calculate_weights,
-)
+from models.splatting.hierarchical.hierarchy_utils import (aggregate_gaussians_recursively,
+                                                           assign_unique_values, build_octree,
+                                                           calculate_weights)
 from utils.general_utils import pack_full_to_lower_triangular
 
 
@@ -26,6 +23,7 @@ class MultiRateMeanScaleHyperprior(CompressionModel):
         n_levels: int = 1,
         scale_mag: int = 20,
         extra_pos_scale: bool = False,
+        with_positions: bool = False,
     ):
         """Mean-Scale Hyperprior compressor.
 
@@ -75,8 +73,11 @@ class MultiRateMeanScaleHyperprior(CompressionModel):
             scale_mag * torch.ones((n_levels, N), requires_grad=requires_grad),
             requires_grad=requires_grad,
         )
-        if extra_pos_scale:
-            with torch.no_grad():
+
+        with torch.no_grad():
+            if extra_pos_scale and with_positions:
+                self.scale[:, 3:9] = 10 * self.scale[:, 3:9]
+            elif extra_pos_scale:
                 self.scale[:, :6] = 10 * self.scale[:, :6]
 
     def capture(self) -> Dict:
@@ -344,14 +345,14 @@ class CompleteMeanScaleHyperprior(nn.Module):
         self.dataset = dataset
         self.n_quant_levels = n_levels
 
-        intra_M = (3 * ((dataset.sh_degree + 1) ** 2)) + 3 + 7 + 1
+        intra_M = (3 * ((dataset.sh_degree + 1) ** 2)) + 0 + 7 + 1
         inter_M = (3 * ((dataset.sh_degree + 1) ** 2)) + 3 + 7 + 1
 
         self.intra_compressor = MultiRateMeanScaleHyperprior(
-            dataset, intra_M, N, n_levels, scale_mag=20
+            dataset, intra_M, N, n_levels, scale_mag=100, extra_pos_scale=True, with_positions=False
         )
         self.inter_compressor = MultiRateMeanScaleHyperprior(
-            dataset, inter_M, N, n_levels, scale_mag=20, extra_pos_scale=True
+            dataset, inter_M, N, n_levels, scale_mag=100, extra_pos_scale=True, with_positions=True
         )
 
     def training_setup(self, optimization_args: Namespace):
@@ -362,35 +363,25 @@ class CompleteMeanScaleHyperprior(nn.Module):
                 "params": [
                     p
                     for n, p in self.intra_compressor.named_parameters()
-                    if ((not n.endswith(".quantiles")) and ("scale" not in n))
+                    if (not n.endswith(".quantiles")) and ("scale" not in n)
                 ],
                 "lr": optimization_args.compressor_lr,
                 "name": "intra_compressor_params",
             },
             {
                 "params": [
-                    p 
-                    for n, p in self.intra_compressor.named_parameters() 
-                    if ((not n.endswith(".quantiles")) and ("scale" in n))],
-                "lr": 0.1,
-                "name": "intra_compressor_scales",
-            },
-            {
-                "params": [
                     p
                     for n, p in self.inter_compressor.named_parameters()
-                    if ((not n.endswith(".quantiles")) and ("scale" not in n))
+                    if (not n.endswith(".quantiles")) and ("scale" not in n)
                 ],
                 "lr": optimization_args.compressor_lr,
                 "name": "inter_compressor_params",
             },
             {
-                "params": [
-                    p 
-                    for n, p in self.inter_compressor.named_parameters() 
-                    if ((not n.endswith(".quantiles")) and ("scale" in n))],
+                "params": [p for n, p in self.intra_compressor.named_parameters() if "scale" in n]
+                + [p for n, p in self.inter_compressor.named_parameters() if "scale" in n],
                 "lr": 0.1,
-                "name": "inter_compressor_scales",
+                "name": "scale_params",
             },
         ]
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
@@ -478,14 +469,148 @@ class CompleteMeanScaleHyperprior(nn.Module):
             for likelihoods in y_likelihoods.values()
         )
 
+    # def get_cut_attributes(
+    #     self,
+    #     gaussians: GaussianModel,
+    #     chosen_depth: int,
+    #     max_depth: int,
+    # ):
+    #     assert chosen_depth <= max_depth, "Chosen depth must be less than or equal to max depth"
+
+    #     if chosen_depth == -1:
+    #         return (
+    #             gaussians.get_xyz,
+    #             gaussians.get_features,
+    #             gaussians.get_covariance(),
+    #             gaussians.get_opacity,
+    #             gaussians.active_sh_degree,
+    #         )
+
+    #     num_cubes = 2 ** chosen_depth
+    #     node_assignments = build_octree(gaussians.get_xyz, num_cubes)
+
+    #     mu = gaussians.get_xyz.contiguous()
+    #     scaling = gaussians.get_scaling.contiguous()
+    #     rotation = gaussians.get_rotation.contiguous()
+    #     sigma = gaussians.get_covariance().contiguous()
+    #     opacity = gaussians.get_opacity.contiguous()
+    #     sh = gaussians.get_features.contiguous()
+
+    #     weights = calculate_weights(sigma, opacity).contiguous()
+
+    #     # # Call function to perform aggregation
+    #     # node_xyzs, node_sigma, node_opacity, node_shs = AggregationFunction.apply(
+    #     #     weights,
+    #     #     mu,
+    #     #     sigma,
+    #     #     opacity,
+    #     #     sh.view(sh.shape[0], -1),
+    #     #     node_assignments.type(torch.int32),
+    #     # )
+
+    #     # Number of groups
+    #     num_nodes = torch.max(node_assignments).item() + 1
+
+    #     # Aggregate weights
+    #     node_weights = torch.zeros(num_nodes, 1).cuda()
+    #     node_weights.scatter_add_(0, node_assignments.unsqueeze(1), weights)
+
+    #     # Aggregate means
+    #     _gaussian_means = weights * mu
+    #     node_xyzs = torch.zeros(num_nodes, _gaussian_means.shape[1]).cuda()
+    #     node_xyzs = node_xyzs.scatter_add(
+    #         0,
+    #         node_assignments.unsqueeze(1).expand(-1, _gaussian_means.shape[1]),
+    #         _gaussian_means
+    #     ) / node_weights
+
+    #     # Aggregate scaling
+    #     _gaussian_scaling = weights * scaling
+    #     node_scaling = torch.zeros(num_nodes, _gaussian_scaling.shape[1]).cuda()
+    #     node_scaling = node_scaling.scatter_add(
+    #         0,
+    #         node_assignments.unsqueeze(1).expand(-1, _gaussian_scaling.shape[1]),
+    #         _gaussian_scaling
+    #     ) / node_weights
+
+    #     # Aggregate rotation
+    #     _gaussian_rotation = weights * rotation
+    #     node_rotation = torch.zeros(num_nodes, _gaussian_rotation.shape[1]).cuda()
+    #     node_rotation = node_rotation.scatter_add(
+    #         0,
+    #         node_assignments.unsqueeze(1).expand(-1, _gaussian_rotation.shape[1]),
+    #         _gaussian_rotation
+    #     ) / node_weights
+
+    #     # Aggregate sigma
+    #     _gaussian_sigma = weights * sigma
+    #     node_sigma = torch.zeros(num_nodes, _gaussian_sigma.shape[1]).cuda()
+
+    #     diff_mu = mu - node_xyzs[node_assignments]
+    #     diff_mu_outer = torch.einsum("ij,ik->ijk", diff_mu, diff_mu)
+    #     diff_mu_vector = pack_full_to_lower_triangular(diff_mu_outer)
+    #     _gaussian_sigma = _gaussian_sigma + weights * diff_mu_vector
+
+    #     node_sigma = torch.zeros(num_nodes, _gaussian_sigma.shape[1]).cuda()
+    #     node_sigma = node_sigma.scatter_add(
+    #         0,
+    #         node_assignments.unsqueeze(1).expand(-1, _gaussian_sigma.shape[1]),
+    #         _gaussian_sigma
+    #     ) / node_weights
+
+    #     # Aggregate opacity
+    #     _gaussian_opacity = weights * opacity
+    #     node_opacity = torch.zeros(num_nodes, 1).cuda()
+    #     node_opacity = node_opacity.scatter_add(
+    #         0,
+    #         node_assignments.unsqueeze(1).expand(-1, _gaussian_opacity.shape[1]),
+    #         _gaussian_opacity
+    #     ) / node_weights
+
+    #     # Aggregate SH
+    #     _gaussian_shs = weights * sh.view(sh.shape[0], -1)
+    #     node_shs = torch.zeros(num_nodes, _gaussian_shs.shape[1]).cuda()
+    #     node_shs = node_shs.scatter_add(
+    #         0,
+    #         node_assignments.unsqueeze(1).expand(-1, _gaussian_shs.shape[1]),
+    #         _gaussian_shs
+    #     ) / node_weights
+
+    #     return (
+    #         node_xyzs,
+    #         node_scaling,
+    #         node_rotation,
+    #         node_sigma,
+    #         node_shs.view(node_shs.shape[0], -1, 3),
+    #         node_opacity,
+    #         node_assignments.type(torch.int32)
+    #     )
+
     def get_cut_attributes(
         self,
         gaussians: GaussianModel,
         chosen_depth: int,
         max_depth: int,
     ):
+        """Get the cut attributes for the given depth level. This method retrieves the intermediate
+        node features for the Gaussian primitives. These features are
+        - xyz: The position of the node.
+        - features: The SH coefficients of the node.
+        - covariance: The covariance of the node.
+        - opacity: The opacity of the node.
+
+        Args:
+            gaussians (GaussianModel): The Gaussian model.
+            chosen_depth (int): The depth level to cut the octree.
+            max_depth (int): The maximum depth of the octree.
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]: The
+                cut attributes and node assignment of Gaussian primitives.
+        """
         assert chosen_depth <= max_depth, "Chosen depth must be less than or equal to max depth"
 
+        # If the depth is -1, we return the Gaussian primitives
         if chosen_depth == -1:
             return (
                 gaussians.get_xyz,
@@ -495,104 +620,38 @@ class CompleteMeanScaleHyperprior(nn.Module):
                 gaussians.active_sh_degree,
             )
 
-        num_cubes = 2 ** chosen_depth
-        node_assignments = build_octree(gaussians.get_xyz, num_cubes)
-
+        # Build the octree and get the node assignments
+        node_assignments = build_octree(gaussians.get_xyz, max_depth)
         mu = gaussians.get_xyz.contiguous()
-        scaling = gaussians.get_scaling.contiguous()
-        rotation = gaussians.get_rotation.contiguous()
         sigma = gaussians.get_covariance().contiguous()
         opacity = gaussians.get_opacity.contiguous()
         sh = gaussians.get_features.contiguous()
 
         weights = calculate_weights(sigma, opacity).contiguous()
 
-        # # Call function to perform aggregation
-        # node_xyzs, node_sigma, node_opacity, node_shs = AggregationFunction.apply(
-        #     weights,
-        #     mu,
-        #     sigma,
-        #     opacity,
-        #     sh.view(sh.shape[0], -1),
-        #     node_assignments.type(torch.int32),
-        # )
+        # Node ids were unique for the overall tensor, now we make them unique per depth level
+        # gaussian_node_assignments = assign_unique_values(gaussian_node_assignments)
+        unique_per_col_gaussian_node_assignments = assign_unique_values(
+            node_assignments
+        ).contiguous()
 
-        # Number of groups
-        num_nodes = torch.max(node_assignments).item() + 1
-
-        # Aggregate weights
-        node_weights = torch.zeros(num_nodes, 1).cuda()
-        node_weights.scatter_add_(0, node_assignments.unsqueeze(1), weights)
-        
-        # Aggregate means
-        _gaussian_means = weights * mu
-        node_xyzs = torch.zeros(num_nodes, _gaussian_means.shape[1]).cuda()
-        node_xyzs = node_xyzs.scatter_add(
-            0, 
-            node_assignments.unsqueeze(1).expand(-1, _gaussian_means.shape[1]), 
-            _gaussian_means
-        ) / node_weights
-
-        # Aggregate scaling
-        _gaussian_scaling = weights * scaling
-        node_scaling = torch.zeros(num_nodes, _gaussian_scaling.shape[1]).cuda()
-        node_scaling = node_scaling.scatter_add(
-            0,
-            node_assignments.unsqueeze(1).expand(-1, _gaussian_scaling.shape[1]),
-            _gaussian_scaling
-        ) / node_weights
-
-        # Aggregate rotation
-        _gaussian_rotation = weights * rotation
-        node_rotation = torch.zeros(num_nodes, _gaussian_rotation.shape[1]).cuda()
-        node_rotation = node_rotation.scatter_add(
-            0,
-            node_assignments.unsqueeze(1).expand(-1, _gaussian_rotation.shape[1]),
-            _gaussian_rotation
-        ) / node_weights
-
-        # Aggregate sigma
-        _gaussian_sigma = weights * sigma
-        node_sigma = torch.zeros(num_nodes, _gaussian_sigma.shape[1]).cuda()
-
-        diff_mu = mu - node_xyzs[node_assignments]
-        diff_mu_outer = torch.einsum("ij,ik->ijk", diff_mu, diff_mu)
-        diff_mu_vector = pack_full_to_lower_triangular(diff_mu_outer)
-        _gaussian_sigma = _gaussian_sigma + weights * diff_mu_vector
-
-        node_sigma = torch.zeros(num_nodes, _gaussian_sigma.shape[1]).cuda()
-        node_sigma = node_sigma.scatter_add(
-            0,
-            node_assignments.unsqueeze(1).expand(-1, _gaussian_sigma.shape[1]),
-            _gaussian_sigma
-        ) / node_weights
-
-        # Aggregate opacity
-        _gaussian_opacity = weights * opacity
-        node_opacity = torch.zeros(num_nodes, 1).cuda()
-        node_opacity = node_opacity.scatter_add(
-            0,
-            node_assignments.unsqueeze(1).expand(-1, _gaussian_opacity.shape[1]),
-            _gaussian_opacity
-        ) / node_weights
-
-        # Aggregate SH
-        _gaussian_shs = weights * sh.view(sh.shape[0], -1)
-        node_shs = torch.zeros(num_nodes, _gaussian_shs.shape[1]).cuda()
-        node_shs = node_shs.scatter_add(
-            0,
-            node_assignments.unsqueeze(1).expand(-1, _gaussian_shs.shape[1]),
-            _gaussian_shs
-        ) / node_weights
-
+        # Aggregate the Gaussian primitives to the chosen depth level
+        node_xyzs, node_sigma, node_opacity, node_shs = aggregate_gaussians_recursively(
+            weights,
+            mu,
+            sigma,
+            opacity,
+            sh.view(sh.shape[0], -1),
+            unique_per_col_gaussian_node_assignments,
+            min_level=chosen_depth,
+            max_level=max_depth,
+        )
         return (
             node_xyzs,
-            node_scaling,
-            node_rotation,
             node_sigma,
             node_shs.view(node_shs.shape[0], -1, 3),
             node_opacity,
-            node_assignments.type(torch.int32)
+            unique_per_col_gaussian_node_assignments[:, chosen_depth],
         )
 
     def get_subsample_indices(self, subsample_fraction: float, num_gaussians: int):
@@ -613,14 +672,16 @@ class CompleteMeanScaleHyperprior(nn.Module):
 
     def get_residuals(
         self,
-        gaussians: GaussianModel,
+        position: torch.Tensor,
+        scaling: torch.Tensor,
+        rotation: torch.Tensor,
+        features: torch.Tensor,
+        opacity: torch.Tensor,
         agg_xyz: torch.Tensor,
         agg_scaling: torch.Tensor,
         agg_rotation: torch.Tensor,
         agg_features: torch.Tensor,
         agg_opacities: torch.Tensor,
-        sorted_node_assignments: torch.Tensor,
-        sorted_indices: torch.Tensor,
     ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Get the residuals for the Gaussian primitives.
         The agg_* parameters are intermediate node features of the Gaussian primitives used
@@ -629,19 +690,11 @@ class CompleteMeanScaleHyperprior(nn.Module):
         aggregated node features.
         """
 
-        residual_position = gaussians.get_xyz[sorted_indices] - agg_xyz[sorted_node_assignments]
-        residual_scaling = (
-            gaussians.get_scaling[sorted_indices] - agg_scaling[sorted_node_assignments]
-        )
-        residual_rotation = (
-            gaussians.get_rotation[sorted_indices] - agg_rotation[sorted_node_assignments]
-        )
-        residual_features = (
-            gaussians.get_features[sorted_indices] - agg_features[sorted_node_assignments]
-        )
-        residual_opacities = (
-            gaussians.get_opacity[sorted_indices] - agg_opacities[sorted_node_assignments]
-        )
+        residual_position = position - agg_xyz
+        residual_scaling = scaling - agg_scaling
+        residual_rotation = rotation - agg_rotation
+        residual_features = features - agg_features
+        residual_opacities = opacity - agg_opacities
         return (
             residual_position,
             residual_scaling,

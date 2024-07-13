@@ -19,16 +19,16 @@ For our experiments, we used the following software versions:
 - CompressAI 1.2.6
 
 To set the environment using the provided `environment.yml` file, you can run the following command (making sure a GPU is available for the installation process):
-```
-conda env create -f environment.yml
+```bash
+conda env create -f environment.yaml
 conda activate gscodec
 ```
 
 Please refer to [3D-MCMC Codebase](https://github.com/ubc-vision/3dgs-mcmc) for installation instructions. Make sure to install CUDA packages with the following command on an available 3DGS environment as this library has been modified:
-```
+```bash
 pip install submodules/diff-gaussian-rasterization
 pip install submodules/simple-knn
-pip install submodules/build_octree
+# pip install submodules/build_octree
 ```
 
 ## Datasets
@@ -269,6 +269,17 @@ python train_compression.py --scene_name tandt/train \
     --checkpoint ./output/mcmc_model/tandt/train/chkpnt25000.pth
 ```
 ### Hierarchical Gaussian Splatting Compression
+
+### Testing
+
+To test the compressed Gaussian splat representation, you can use `test.py` script with respective config file. To run the script, you need to provide following arguments:
+
+- `--scene_name`: Name of the scene to be tested. (e.g. `tandt/train`)
+- `--config_path`: Path to the config file. (e.g. `./config/preset_configs/mcmc_radsplat.yaml`)
+- `--model_path`: Path to the model training folder. (e.g. `./output/mcmc_radsplat/tandt/train`)
+- `--model`: Model type to be tested. (e.g. `mcmc`, `radsplat`, `complete`,...)
+- `--load_iteration`: Iteration number to be loaded from the checkpoints `folder` in `model_path`. (e.g. `30000`)
+- `--compressor`: Compressor type to be used for testing. (e.g. `meanscale`, `entropybottleneck`, nothing if no compression)
 
 ## Acknowledgement
 This repository is based on the [3DGS codebase](https://github.com/graphdeco-inria/gaussian-splatting) and [3D-MCMC codebase](https://ubc-vision.github.io/3dgs-mcmc). We would like to thank the authors of these repositories for their contributions.

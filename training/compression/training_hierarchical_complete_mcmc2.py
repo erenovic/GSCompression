@@ -20,18 +20,18 @@ from tqdm import tqdm
 
 from gaussian_renderer import get_max_alphas
 from gaussian_renderer import render as gaussian_render
-# from gaussian_renderer.compression_renderer import render
-
 from gaussian_renderer.covariance_renderer import render as render
-from models.compression.compression_utils import get_size_in_bits
-from models.compression.multirate_complete_eb import CompleteEntropyBottleneck
+from models.compression.multirate_complete_ms2 import CompleteMeanScaleHyperprior
 from models.splatting.hierarchical.hierarchy_utils import choose_min_max_depth
 from models.splatting.mcmc_model import GaussianModel
 from scene import Scene
-from scene.cameras import Camera
 from training.training_utils import bump_iterations_for_secondary_training
-from utils.general_utils import decompose_covariance_matrix, make_psd, compute_required_rotation_and_scaling, apply_cholesky, apply_inverse_cholesky, pack_full_to_lower_triangular, unpack_lower_triangular_to_full, apply_rotation_and_scaling
+from utils.general_utils import apply_cholesky, apply_inverse_cholesky, make_psd
 from utils.loss_utils import l1_loss, l2_loss, ssim
+
+# from gaussian_renderer.compression_renderer import render
+
+
 
 
 def freeze_geometry(gaussians, dataset):
@@ -60,7 +60,7 @@ def training(
     dataset,
     optimization,
     pipeline,
-    compressor: CompleteEntropyBottleneck,
+    compressor: CompleteMeanScaleHyperprior,
     testing_iterations,
     saving_iterations,
     checkpoint_iterations,
@@ -91,8 +91,6 @@ def training(
             raise ValueError("Invalid checkpoint format")
 
         gaussians.restore(model_params, optimization)
-        compressor.intra_compressor.init_normalization_params(gaussians)
-        compressor.inter_compressor.init_normalization_params(gaussians)
 
         if dataset.freeze_geometry:
             freeze_geometry(gaussians, dataset)
@@ -182,10 +180,9 @@ def training(
         # 1. Perform intra-coding of the aggregated attributes
         intra_indices = compressor.get_subsample_indices(subsample_fraction, mean3D.shape[0])
 
-        # breakpoint()
-
         intra_input = torch.cat(
             (
+                # mean3D[intra_indices],
                 covariance_L[intra_indices],
                 opacity[intra_indices],
                 shs[intra_indices].view(-1, 3 * ((dataset.sh_degree + 1) ** 2)),
@@ -197,12 +194,21 @@ def training(
         )
         intra_num_coeffs = len(intra_indices) * intra_num_coeffs
 
-        intra_covariance = apply_inverse_cholesky(intra_compressed_attrs[:, :6])
-
         compressed_agg_mean3D = mean3D.clone()
         compressed_agg_covariance = covariance.clone()
         compressed_agg_opacity = opacity.clone()
         compressed_agg_shs = shs.clone()
+
+        # intra_covariance = apply_inverse_cholesky(intra_compressed_attrs[:, 3:9])
+
+        # compressed_agg_mean3D[intra_indices] = intra_compressed_attrs[:, :3]
+        # compressed_agg_covariance[intra_indices] = make_psd(intra_covariance)
+        # compressed_agg_opacity[intra_indices] = torch.clamp(intra_compressed_attrs[:, 9:10], 0, 1)
+        # compressed_agg_shs[intra_indices] = intra_compressed_attrs[:, 10:].view(
+        #     intra_compressed_attrs.shape[0], -1, 3
+        # )
+
+        intra_covariance = apply_inverse_cholesky(intra_compressed_attrs[:, :6])
 
         compressed_agg_covariance[intra_indices] = make_psd(intra_covariance)
         compressed_agg_opacity[intra_indices] = torch.clamp(intra_compressed_attrs[:, 6:7], 0, 1)
@@ -215,8 +221,8 @@ def training(
         # 2. Calculate residuals for the compressed attributes
         inter_indices = compressor.get_subsample_indices(subsample_fraction, mean3D.shape[0])
 
-        res_position, res_scaling, res_rotation, res_shs, res_opacity = compressor.get_residuals(
-        # res_position, res_covariance, res_shs, res_opacity = compressor.get_residuals(
+        # res_position, res_scaling, res_rotation, res_shs, res_opacity = compressor.get_residuals(
+        res_position, res_covariance, res_shs, res_opacity = compressor.get_residuals(
             gaussians.get_xyz[sorted_indices],
             gaussians.get_covariance()[sorted_indices],
             gaussians.get_features[sorted_indices],
@@ -224,7 +230,7 @@ def training(
             compressed_agg_mean3D[sorted_node_assignments].detach(),
             compressed_agg_covariance[sorted_node_assignments].detach(),
             compressed_agg_shs[sorted_node_assignments].detach(),
-            compressed_agg_opacity[sorted_node_assignments].detach()
+            compressed_agg_opacity[sorted_node_assignments].detach(),
         )
         ########################################################################
 
@@ -233,9 +239,9 @@ def training(
         inter_input = torch.cat(
             (
                 res_position[inter_indices],
-                # res_covariance[inter_indices],
-                res_scaling[inter_indices],
-                res_rotation[inter_indices],
+                res_covariance[inter_indices],
+                # res_scaling[inter_indices],
+                # res_rotation[inter_indices],
                 res_opacity[inter_indices],
                 res_shs[inter_indices].view(-1, 3 * ((dataset.sh_degree + 1) ** 2)),
             ),
@@ -249,43 +255,31 @@ def training(
         out_res_pos = res_position.clone()
         out_res_shs = res_shs.clone()
         out_res_opacity = res_opacity.clone()
-        # out_res_covariance = res_covariance.clone()
+        out_res_covariance = res_covariance.clone()
 
         out_res_pos[inter_indices] = inter_compressed_attrs[:, :3]
-        # out_res_covariance[inter_indices] = inter_compressed_attrs[:, 3:9]
-        out_res_opacity[inter_indices] = inter_compressed_attrs[:, 10:11]
-        out_res_shs[inter_indices] = inter_compressed_attrs[:, 11:].view(
+        out_res_covariance[inter_indices] = inter_compressed_attrs[:, 3:9]
+        out_res_opacity[inter_indices] = inter_compressed_attrs[:, 9:10]
+        out_res_shs[inter_indices] = inter_compressed_attrs[:, 10:].view(
             inter_compressed_attrs.shape[0], -1, 3
         )
 
         full_covariance = gaussians.get_covariance()[sorted_indices]
-        full_covariance[inter_indices] = make_psd(
-            apply_rotation_and_scaling(
-                compressed_agg_covariance[sorted_node_assignments][inter_indices].detach(),
-                torch.abs(inter_compressed_attrs[:, 3:6]),
-                torch.nn.functional.normalize(inter_compressed_attrs[:, 6:10]),
-            )
-        )
+        # full_covariance[inter_indices] = make_psd(
+        #     apply_rotation_and_scaling(
+        #         compressed_agg_covariance[sorted_node_assignments][inter_indices].detach(),
+        #         torch.abs(inter_compressed_attrs[:, 3:6]),
+        #         torch.nn.functional.normalize(inter_compressed_attrs[:, 6:10]),
+        #     )
+        # )
         full_position = compressed_agg_mean3D[sorted_node_assignments].detach() + out_res_pos
-        # full_covariance = make_psd(compressed_agg_covariance[sorted_node_assignments].detach() + out_res_covariance)
+        full_covariance = make_psd(
+            compressed_agg_covariance[sorted_node_assignments].detach() + out_res_covariance
+        )
         full_shs = compressed_agg_shs[sorted_node_assignments].detach() + out_res_shs
         full_opacity = torch.clamp(
             compressed_agg_opacity[sorted_node_assignments].detach() + out_res_opacity, 0, 1
         )
-        # print("-------------HERE------------------------------")
-        # print(compressed_agg_mean3D.min(), compressed_agg_mean3D.max())
-        # print(compressed_agg_covariance.min(), compressed_agg_covariance.max())
-        # print(compressed_agg_opacity.min(), compressed_agg_opacity.max())
-        # print(compressed_agg_shs.min(), compressed_agg_shs.max())
-        # print("---------------------------------------------------")
-        # print(full_covariance.min(), full_covariance.max())
-        # print(full_position.min(), full_position.max())
-        # print(full_opacity.min(), full_opacity.max())
-        # print(full_shs.min(), full_shs.max())
-        # print(out_res_pos.min(), out_res_pos.max())
-        # print(out_res_opacity.min(), out_res_opacity.max())
-        # print(out_res_shs.min(), out_res_shs.max())
-        # breakpoint()
         ########################################################################
 
         intra_size = compressor.calculate_entropy(intra_likelihoods)
@@ -320,7 +314,7 @@ def training(
         )
         image_inter = render_inter_pkg["render"]
 
-        if iteration % 2000 == 0:
+        if iteration % 1000 == 0:
             # Save image for visualization
             logger.info(f"Intra Size: {(intra_size / (8 * (2**20) * subsample_fraction)):.{5}f} MB")
             logger.info(f"Inter Size: {(inter_size / (8 * (2**20) * subsample_fraction)):.{5}f} MB")
@@ -328,23 +322,24 @@ def training(
             # logger.info(f"Aggregated means3D size: {agg_means_size / (2**20):.{5}f} MB")
             print("Intra Scale:", compressor.intra_compressor.scale[:, :10])
             print("Inter scale:", compressor.inter_compressor.scale[:, :10])
-            logger.save_image(
-                torch.clamp(image_intra, 0.0, 1.0),
-                f"{logger.rendering_dir}/intra_{iteration}_{viewpoint_cam.image_name}.png",
-            )
-            logger.save_image(
-                torch.clamp(image_inter, 0.0, 1.0),
-                f"{logger.rendering_dir}/inter_{iteration}_{viewpoint_cam.image_name}.png",
-            )
+            # logger.save_image(
+            #     torch.clamp(image_intra, 0.0, 1.0),
+            #     f"{logger.rendering_dir}/intra_{iteration}_{viewpoint_cam.image_name}.png",
+            # )
+            # logger.save_image(
+            #     torch.clamp(image_inter, 0.0, 1.0),
+            #     f"{logger.rendering_dir}/inter_{iteration}_{viewpoint_cam.image_name}.png",
+            # )
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1_intra = l1_loss(image_intra, gt_image)
         Ll1_inter = l1_loss(image_inter, gt_image)
-        loss = (1.0 - optimization.lambda_dssim) * Ll1_inter + optimization.lambda_dssim * (
-            1.0 - ssim(image_inter, gt_image)
-        ) + (1.0 - optimization.lambda_dssim) * Ll1_intra + optimization.lambda_dssim * (
-            1.0 - ssim(image_intra, gt_image)
+        loss = (
+            (1.0 - optimization.lambda_dssim) * Ll1_inter
+            + optimization.lambda_dssim * (1.0 - ssim(image_inter, gt_image))
+            + (1.0 - optimization.lambda_dssim) * Ll1_intra
+            + optimization.lambda_dssim * (1.0 - ssim(image_intra, gt_image))
         )
 
         # loss = loss + optimization.lambda_opacity * torch.abs(gaussians.get_opacity).mean()
@@ -352,12 +347,9 @@ def training(
 
         compression_loss = entropy_lambdas[entropy_lambda_level] * entropy_loss
         pos_loss = l1_loss(full_position, gaussians.get_xyz[sorted_indices])
-        covariance_loss = l1_loss(full_covariance, gaussians.get_covariance()[sorted_indices]) + \
-            l1_loss(intra_covariance, covariance[intra_indices])
-        sh_loss = l1_loss(full_shs, gaussians.get_features[sorted_indices]) + \
-            l1_loss(intra_compressed_attrs[:, 7:].view(intra_compressed_attrs.shape[0], -1, 3), shs[intra_indices])
-        opacity_loss = l1_loss(full_opacity, gaussians.get_opacity[sorted_indices]) + \
-            l1_loss(intra_compressed_attrs[:, 6:7], opacity[intra_indices])
+        covariance_loss = l1_loss(full_covariance, gaussians.get_covariance()[sorted_indices])
+        sh_loss = l1_loss(full_shs, gaussians.get_features[sorted_indices])
+        opacity_loss = l1_loss(full_opacity, gaussians.get_opacity[sorted_indices])
 
         loss: torch.Tensor = (
             loss
@@ -374,14 +366,6 @@ def training(
 
         loss.backward()
         aux_loss.backward()
-
-        # print("------------LOSS------------")
-        # print(loss)
-        # print(compressor.intra_compressor.scale.grad)
-        # print(compressor.inter_compressor.hyper_scale.grad)
-        # print(compressor.inter_compressor.scale.grad)
-        # print(compressor.inter_compressor.hyper_scale.grad)
-        # breakpoint()
 
         iter_end.record()
 
@@ -411,7 +395,6 @@ def training(
 
             losses = {
                 "l1": Ll1_inter.item() + Ll1_intra.item(),
-                # "l1": -1.0,
                 "mask": 0.0,
                 "compression": (
                     compression_loss.item() if iteration >= COMPRESSION_TRAIN_ITER_FROM else 0.0
@@ -451,7 +434,8 @@ def training(
                     )
 
                     intra_compress_result_dict = eb.compress_intra(
-                        intra_input, level=entropy_lambda_level,
+                        intra_input,
+                        level=entropy_lambda_level,
                     )
                     losses["test_bits"] += sum(intra_compress_result_dict["sizes"])
 
@@ -463,24 +447,28 @@ def training(
                         level=intra_compress_result_dict["level"],
                     )
 
-                    agg_test_position = mean3D
+                    # agg_test_position = decompressed_attrs[:, :3]
+                    # agg_test_covariance = apply_inverse_cholesky(decompressed_attrs[:, 3:9])
+                    # agg_test_opacity = torch.clamp(decompressed_attrs[:, 9:10], 0.0, 1.0)
+                    # agg_test_shs = decompressed_attrs[:, 10:].view(
+                    #     decompressed_attrs.shape[0], -1, 3
+                    # )
+                    agg_test_position = mean3D.clone()
                     agg_test_covariance = apply_inverse_cholesky(decompressed_attrs[:, :6])
                     agg_test_opacity = torch.clamp(decompressed_attrs[:, 6:7], 0.0, 1.0)
                     agg_test_shs = decompressed_attrs[:, 7:].view(
                         decompressed_attrs.shape[0], -1, 3
                     )
 
-                    res_position, res_covariance, res_shs, res_opacity = (
-                        eb.get_residuals(
-                            gaussians.get_xyz[sorted_indices],
-                            gaussians.get_covariance()[sorted_indices],
-                            gaussians.get_features[sorted_indices],
-                            gaussians.get_opacity[sorted_indices],
-                            agg_test_position[sorted_node_assignments],
-                            agg_test_covariance[sorted_node_assignments],
-                            agg_test_shs[sorted_node_assignments],
-                            agg_test_opacity[sorted_node_assignments]
-                        )
+                    res_position, res_covariance, res_shs, res_opacity = eb.get_residuals(
+                        gaussians.get_xyz[sorted_indices],
+                        gaussians.get_covariance()[sorted_indices],
+                        gaussians.get_features[sorted_indices],
+                        gaussians.get_opacity[sorted_indices],
+                        agg_test_position[sorted_node_assignments],
+                        agg_test_covariance[sorted_node_assignments],
+                        agg_test_shs[sorted_node_assignments],
+                        agg_test_opacity[sorted_node_assignments],
                     )
 
                     inter_input = torch.cat(
@@ -494,7 +482,8 @@ def training(
                     )
 
                     inter_compress_result_dict = eb.compress_inter(
-                        inter_input, level=entropy_lambda_level,
+                        inter_input,
+                        level=entropy_lambda_level,
                     )
                     losses["test_bits"] += sum(inter_compress_result_dict["sizes"])
 
@@ -521,7 +510,8 @@ def training(
                     )
                     test_opacity = torch.clamp(
                         agg_test_opacity[sorted_node_assignments] + compressed_attrs[:, 9:10],
-                        0.0, 1.0
+                        0.0,
+                        1.0,
                     )
                     test_shs = agg_test_shs[sorted_node_assignments] + compressed_attrs[
                         :, 10:
@@ -562,43 +552,12 @@ def training(
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
 
-            # if (
-            #     iteration < optimization.densify_until_iter
-            #     and iteration > optimization.densify_from_iter
-            #     and iteration % optimization.densification_interval == 0
-            # ):
-            #     dead_mask = (gaussians.get_opacity <= 0.005).squeeze(-1)
-            #     gaussians.relocate_gs(dead_mask=dead_mask)
-            #     gaussians.add_new_gs(cap_max=dataset.cap_max)
-
             # Optimizer step
             if iteration < optimization.iterations:
-                # gaussians.optimizer.step()
-                # gaussians.optimizer.zero_grad(set_to_none=True)
-
-                # L = build_scaling_rotation(gaussians.get_scaling, gaussians.get_rotation)
-                # actual_covariance = L @ L.transpose(1, 2)
-
-                # def op_sigmoid(x, k=100, x0=0.995):
-                #     return 1 / (1 + torch.exp(-k * (x - x0)))
-
-                # noise = (
-                #     torch.randn_like(gaussians._xyz)
-                #     * (op_sigmoid(1 - gaussians.get_opacity))
-                #     * optimization.noise_lr
-                #     * xyz_lr
-                # )
-                # noise = torch.bmm(actual_covariance, noise.unsqueeze(-1)).squeeze(-1)
-                # gaussians._xyz.add_(noise)
-
                 compressor.optimizer.step()
                 compressor.optimizer.zero_grad(set_to_none=True)
                 compressor.aux_optimizer.step()
                 compressor.aux_optimizer.zero_grad(set_to_none=True)
-
-            # if iteration in optimization.radsplat_prune_at:
-            #     max_alphas = get_max_alphas_over_training_cameras(gaussians, scene, pipeline)
-            #     gaussians.radsplat_prune(max_alphas, optimization.radsplat_prune_threshold)
 
             if iteration in optimization.checkpoint_iterations:
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))

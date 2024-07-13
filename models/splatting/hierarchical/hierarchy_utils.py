@@ -29,7 +29,7 @@ def choose_min_max_depth(points3D) -> Tuple[int, int]:
     return min_depth, max_depth
 
 
-def build_octree(point3D: torch.Tensor, num_cubes: int):
+def build_octree(point3D: torch.Tensor, max_depth: int):
     """Builds an octree from the given 3D points and return the node assignment of each 3D point
     to one of the intermediate nodes
 
@@ -51,17 +51,20 @@ def build_octree(point3D: torch.Tensor, num_cubes: int):
 
         point3D = point3D.contiguous()
 
-        cube_size = torch.max(box_max - box_min) / num_cubes
+        octree = hierarchy_generation.Octree(max_depth)
+        new_indices = octree.get_point_node_assignment(point3D, box_min, box_max)
 
-        # Compute the grid indices for each point
-        indices = ((point3D - box_min) / cube_size).floor().long()
+        # cube_size = torch.max(box_max - box_min) / num_cubes
 
-        # Convert 3D indices to a unique group ID
-        # Assuming the grid extends only within the AABB:
-        grid_dim = ((box_max - box_min) / cube_size).ceil().long()
-        group_ids = indices[:, 0] + indices[:, 1] * grid_dim[0] + indices[:, 2] * grid_dim[0] * grid_dim[1]
+        # # Compute the grid indices for each point
+        # indices = ((point3D - box_min) / cube_size).floor().long()
 
-        _, new_indices = torch.unique(group_ids, sorted=True, return_inverse=True)
+        # # Convert 3D indices to a unique group ID
+        # # Assuming the grid extends only within the AABB:
+        # grid_dim = ((box_max - box_min) / cube_size).ceil().long()
+        # group_ids = indices[:, 0] + indices[:, 1] * grid_dim[0] + indices[:, 2] * grid_dim[0] * grid_dim[1]
+
+        # _, new_indices = torch.unique(group_ids, sorted=True, return_inverse=True)
     return new_indices
 
 

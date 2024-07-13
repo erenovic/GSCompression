@@ -101,8 +101,8 @@ def render_set(
         model_size = os.path.getsize(compression_folder / "compressor.pth") / (2**20)
         logging.info(f"The size of the model params is: {model_size} MBytes in level {level}")
 
-        # xyz_size = os.path.getsize(compression_folder / "xyz.npz") / (2**20)
-        # logging.info(f"The size of the xyz is: {xyz_size} MBytes in level {level}")
+        xyz_size = os.path.getsize(compression_folder / "xyz.npz") / (2**20)
+        logging.info(f"The size of the xyz is: {xyz_size} MBytes in level {level}")
 
         node_assignment_size = os.path.getsize(compression_folder / "node_assignments.npz") / (
             2**20
@@ -113,7 +113,7 @@ def render_set(
 
         gaussian_params_size = intra_params_size + inter_params_size
         logging.info(
-            f"Total size: {gaussian_params_size + model_size + node_assignment_size} MBytes in level {level}"
+            f"Total size: {gaussian_params_size + xyz_size + model_size + node_assignment_size} MBytes in level {level}"
         )
 
         t_list = []
@@ -153,19 +153,20 @@ def render_set(
     return gaussians.get_xyz.shape[0], folder_names, gts_path
 
 
-def compress_all(compressor, gaussians, folder: Path, level):
+def compress_all(compressor: CompleteMeanScaleHyperprior, gaussians, folder: Path, level):
 
     copy_compressor = copy.deepcopy(compressor)
 
     bitstring_path = folder / "compressed_gaussian.bin"
     model_path = folder / "compressor.pth"
     node_assignment_path = folder / "node_assignments.npz"
+    xyz_path = folder / "xyz.npz"
 
     with torch.no_grad():
         # Calculate the hierarchy just once, never update Gaussians
         chosen_depth, max_depth = choose_min_max_depth(gaussians.get_xyz)
 
-        (mean3D, scaling, rotation, covariance, shs, opacity, node_assignment) = compressor.get_cut_attributes(
+        (mean3D, covariance, shs, opacity, node_assignment) = compressor.get_cut_attributes(
             gaussians, chosen_depth, max_depth
         )
 
@@ -177,20 +178,16 @@ def compress_all(compressor, gaussians, folder: Path, level):
             node_assignment=sorted_node_assignments.cpu().numpy(),
         )
 
-        # scaling0, rotation0 = decompose_covariance_matrix(
-        #     covariance[: covariance.shape[0] // 2]
-        # )
-        # scaling1, rotation1 = decompose_covariance_matrix(
-        #     covariance[covariance.shape[0] // 2 :]
-        # )
-        # scaling = torch.cat((scaling0, scaling1), dim=0)
-        # rotation = torch.cat((rotation0, rotation1), dim=0)
+        scaling0, rotation0 = decompose_covariance_matrix(covariance[: covariance.shape[0] // 2])
+        scaling1, rotation1 = decompose_covariance_matrix(covariance[covariance.shape[0] // 2 :])
+        scaling = torch.cat((scaling0, scaling1), dim=0)
+        rotation = torch.cat((rotation0, rotation1), dim=0)
 
     compressor.update()
 
     intra_input = torch.cat(
         (
-            mean3D,
+            # mean3D,
             scaling,
             rotation,
             opacity,
@@ -200,7 +197,8 @@ def compress_all(compressor, gaussians, folder: Path, level):
     )
 
     intra_compress_result_dict = compressor.compress_intra(
-        intra_input, level=level,
+        intra_input,
+        level=level,
     )
     decompressed_attrs = compressor.decompress_intra(
         intra_compress_result_dict["bitstrings"],
@@ -208,21 +206,29 @@ def compress_all(compressor, gaussians, folder: Path, level):
         level=intra_compress_result_dict["level"],
     )
 
-    agg_test_position = decompressed_attrs[:, :3]
-    agg_test_scaling = decompressed_attrs[:, 3:6]
-    agg_test_rotation = decompressed_attrs[:, 6:10]
-    agg_test_opacity = decompressed_attrs[:, 10:11]
-    agg_test_shs = decompressed_attrs[:, 11:].view(decompressed_attrs.shape[0], -1, 3)
+    agg_test_position = mean3D
+    agg_test_scaling = decompressed_attrs[:, :3]
+    agg_test_rotation = decompressed_attrs[:, 3:7]
+    agg_test_opacity = decompressed_attrs[:, 7:8]
+    agg_test_shs = decompressed_attrs[:, 8:].view(decompressed_attrs.shape[0], -1, 3)
+
+    # agg_test_position = decompressed_attrs[:, :3]
+    # agg_test_scaling = decompressed_attrs[:, 3:6]
+    # agg_test_rotation = decompressed_attrs[:, 6:10]
+    # agg_test_opacity = decompressed_attrs[:, 10:11]
+    # agg_test_shs = decompressed_attrs[:, 11:].view(decompressed_attrs.shape[0], -1, 3)
 
     res_position, res_scaling, res_rotation, res_shs, res_opacity = compressor.get_residuals(
-        gaussians,
-        agg_test_position,
-        agg_test_scaling,
-        agg_test_rotation,
-        agg_test_shs,
-        agg_test_opacity,
-        sorted_node_assignments,
-        sorted_indices,
+        gaussians.get_xyz[sorted_indices],
+        gaussians.get_scaling[sorted_indices],
+        gaussians.get_rotation[sorted_indices],
+        gaussians.get_features[sorted_indices],
+        gaussians.get_opacity[sorted_indices],
+        agg_test_position[sorted_node_assignments],
+        agg_test_scaling[sorted_node_assignments],
+        agg_test_rotation[sorted_node_assignments],
+        agg_test_shs[sorted_node_assignments],
+        agg_test_opacity[sorted_node_assignments],
     )
 
     inter_input = torch.cat(
@@ -261,16 +267,14 @@ def compress_all(compressor, gaussians, folder: Path, level):
 
     torch.save(model_params, model_path)
 
-    # # 3. Save the xyz as a pth file (after quantization)
-    # xyz = gaussians.get_xyz.type(torch.float16).detach().cpu().numpy()
-    # np.savez_compressed(xyz_path, xyz=xyz)
-    # # xyz = gaussians.get_xyz.type(torch.float16)
-    # # torch.save(xyz, xyz_path)
+    # 3. Save mean3D
+    np.savez_compressed(f"{xyz_path}", xyz=mean3D.type(torch.float16).cpu().numpy())
 
 
 def decompress_all(actual_model, dataset: Namespace, folder: Path, level):
     bitstring_path = folder / "compressed_gaussian.bin"
     model_path = folder / "compressor.pth"
+    xyz_path = folder / "xyz.npz"
     node_assignment_path = folder / "node_assignments.npz"
 
     node_assignments = torch.from_numpy(np.load(node_assignment_path)["node_assignment"]).cuda()
@@ -291,9 +295,6 @@ def decompress_all(actual_model, dataset: Namespace, folder: Path, level):
             inter_loaded_bitstrings.append([file.read()])
 
     loaded_model_params = torch.load(model_path)
-
-    # xyz = torch.Tensor(np.load(xyz_path)["xyz"]).type(torch.float32).cuda()
-    # # xyz = torch.load(xyz_path).type(torch.float32).cuda()
 
     # TODO: Choose the compressor type
     if len(intra_loaded_bitstrings) == 1:
@@ -324,16 +325,29 @@ def decompress_all(actual_model, dataset: Namespace, folder: Path, level):
         inter_loaded_bitstrings, size=[loaded_model_params[3]], level=level
     )
 
+    mean3D = (
+        torch.Tensor(np.load(xyz_path)["xyz"]).type(torch.float32).cuda()[node_assignments]
+        + inter_decompressed_attrs[:, :3]
+    )
+    scaling = torch.clamp(
+        intra_decompressed_attrs[node_assignments, :3] + inter_decompressed_attrs[:, 3:6], 1.0e-8
+    )
+    rotation = torch.nn.functional.normalize(
+        intra_decompressed_attrs[node_assignments, 3:7] + inter_decompressed_attrs[:, 6:10]
+    )
+    opacity = torch.clamp(
+        intra_decompressed_attrs[node_assignments, 7:8] + inter_decompressed_attrs[:, 10:11],
+        0.0,
+        1.0,
+    )
+    features = (
+        intra_decompressed_attrs[node_assignments, 8:] + inter_decompressed_attrs[:, 11:]
+    ).view(inter_decompressed_attrs.shape[0], -1, 3)
+
     return {
-        "position": intra_decompressed_attrs[node_assignments, :3]
-        + inter_decompressed_attrs[:, :3],
-        "scaling": intra_decompressed_attrs[node_assignments, 3:6]
-        + inter_decompressed_attrs[:, 3:6],
-        "rotation": intra_decompressed_attrs[node_assignments, 6:10]
-        + inter_decompressed_attrs[:, 6:10],
-        "opacity": intra_decompressed_attrs[node_assignments, 10:11]
-        + inter_decompressed_attrs[:, 10:11],
-        "features": (
-            intra_decompressed_attrs[node_assignments, 11:] + inter_decompressed_attrs[:, 11:]
-        ).view(inter_decompressed_attrs.shape[0], -1, 3),
+        "position": mean3D,
+        "scaling": scaling,
+        "rotation": rotation,
+        "opacity": opacity,
+        "features": features,
     }, loaded_model_params[-1]

@@ -24,13 +24,8 @@ from plyfile import PlyData, PlyElement
 from simple_knn._C import distCUDA2
 from torch import nn
 
-from utils.general_utils import (
-    build_rotation,
-    build_scaling_rotation,
-    get_expon_lr_func,
-    inverse_sigmoid,
-    strip_symmetric,
-)
+from utils.general_utils import (build_rotation, build_scaling_rotation, get_expon_lr_func,
+                                 inverse_sigmoid, strip_symmetric)
 from utils.graphics_utils import BasicPointCloud
 from utils.reloc_utils import compute_relocation_cuda
 from utils.sh_utils import RGB2SH

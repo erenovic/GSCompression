@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH  --job-name=high
-#SBATCH  --output=/scratch_net/biwidl214/ecetin_scratch/renewed_repo/log/log-%j.out
-#SBATCH --error=/scratch_net/biwidl214/ecetin_scratch/renewed_repo/log/errors-%j.err
+#SBATCH  --output=/scratch_net/biwidl214/ecetin_scratch/GSCompression/log/log-%j.out
+#SBATCH --error=/scratch_net/biwidl214/ecetin_scratch/GSCompression/log/errors-%j.err
 #SBATCH  --gres=gpu:1
 #SBATCH  --cpus-per-task=4
 #SBATCH  --mem=30G
@@ -12,7 +12,7 @@
 #SBATCH  --constraint='a6000'
 
 # echo "Starting job"
-cd /scratch_net/biwidl214/ecetin_scratch/renewed_repo
+cd /scratch_net/biwidl214/ecetin_scratch/GSCompression
 source /scratch_net/biwidl214/ecetin/conda/etc/profile.d/conda.sh
 conda activate gscodec
 

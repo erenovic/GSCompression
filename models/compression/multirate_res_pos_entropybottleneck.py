@@ -6,12 +6,9 @@ import torch.nn as nn
 from compressai import entropy_models
 
 from models.compression.base_model import BaseCompressor
-from models.splatting.hierarchical.hierarchy_utils import (
-    aggregate_gaussians_recursively,
-    assign_unique_values,
-    build_octree,
-    calculate_weights,
-)
+from models.splatting.hierarchical.hierarchy_utils import (aggregate_gaussians_recursively,
+                                                           assign_unique_values, build_octree,
+                                                           calculate_weights)
 
 # from compressai.models import CompressionModel
 

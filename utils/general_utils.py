@@ -257,7 +257,7 @@ def nearest_psd(A, tol=1e-8):
     for i in range(100):  # Maximum number of iterations
         R = Y - proj_psd(Y - A)
         Y = proj_s(R)
-        if torch.norm(A - Y, p='fro') / torch.norm(A, p='fro') < tol:
+        if torch.norm(A - Y, p="fro") / torch.norm(A, p="fro") < tol:
             break
 
     return Y
@@ -330,11 +330,15 @@ def compute_required_rotation_and_scaling(
     """
     B = predicted_covariance.shape[0]
 
-    full_predicted_covariance = unpack_lower_triangular_to_full(predicted_covariance) + \
-        torch.eye(3, device=predicted_covariance.device).unsqueeze(0) * 1e-3
-    full_target_covariance = unpack_lower_triangular_to_full(target_covariance) + \
-        torch.eye(3, device=predicted_covariance.device).unsqueeze(0) * 1e-3
-    
+    full_predicted_covariance = (
+        unpack_lower_triangular_to_full(predicted_covariance)
+        + torch.eye(3, device=predicted_covariance.device).unsqueeze(0) * 1e-3
+    )
+    full_target_covariance = (
+        unpack_lower_triangular_to_full(target_covariance)
+        + torch.eye(3, device=predicted_covariance.device).unsqueeze(0) * 1e-3
+    )
+
     # Perform SVD on each batch of covariance matrices
     # U1, S1, V1 = torch.svd(full_predicted_covariance)
     # U2, S2, V2 = torch.svd(full_target_covariance)
@@ -349,48 +353,57 @@ def compute_required_rotation_and_scaling(
     Q = rotation_matrix_to_quaternion(R)
     return S, Q
 
+
 def apply_rotation_and_scaling(predicted_covariance: torch.Tensor, S, Q):
     """
-    Apply the rotation and scaling factors to predicted_covariance to calculate 
+    Apply the rotation and scaling factors to predicted_covariance to calculate
     target_covariance.
-    
+
     Parameters:
     predicted_covariance (torch.Tensor): Batch of 3x3 covariance matrices of shape (B, 6)
     Q (torch.Tensor): Quaternions of shape (B, 4)
     S (torch.Tensor): Scaling factors of shape (B, 3)
-    
+
     Returns:
     torch.Tensor: Transformed target_covariance of shape (B, 6)
     """
 
     pred_eigvals, pred_eigvecs = torch.linalg.eigh(
-        unpack_lower_triangular_to_full(predicted_covariance) + \
-            torch.eye(3, device=predicted_covariance.device).unsqueeze(0) * 1e-3
+        unpack_lower_triangular_to_full(predicted_covariance)
+        + torch.eye(3, device=predicted_covariance.device).unsqueeze(0) * 1e-3
     )
     R = build_rotation(Q)
-    
+
     # Apply scaling factors
-    result = torch.matmul(
-        R @ pred_eigvecs, 
+    result = (
         torch.matmul(
-            torch.diag_embed(pred_eigvals * S), 
-            pred_eigvecs.transpose(-2, -1) @ R.transpose(-2, -1)
+            R @ pred_eigvecs,
+            torch.matmul(
+                torch.diag_embed(pred_eigvals * S),
+                pred_eigvecs.transpose(-2, -1) @ R.transpose(-2, -1),
+            ),
         )
-    ) - torch.eye(3, device=predicted_covariance.device).unsqueeze(0) * 1e-3
+        - torch.eye(3, device=predicted_covariance.device).unsqueeze(0) * 1e-3
+    )
     return pack_full_to_lower_triangular(result)
+
 
 def apply_cholesky(covariance: torch.Tensor) -> torch.Tensor:
     """Perform Cholesky decomposition on covariance (B x 6) to get lower triangular"""
-    full_covariance = unpack_lower_triangular_to_full(covariance, symmetric=False) + \
-        torch.eye(3, device=covariance.device).unsqueeze(0) * 1e-3
+    full_covariance = (
+        unpack_lower_triangular_to_full(covariance, symmetric=False)
+        + torch.eye(3, device=covariance.device).unsqueeze(0) * 1e-3
+    )
     L = torch.linalg.cholesky(full_covariance)
     return pack_full_to_lower_triangular(L)
+
 
 def apply_inverse_cholesky(L: torch.Tensor) -> torch.Tensor:
     """Reconstruct full covariance matrix from lower triangular"""
     L_matrix = unpack_lower_triangular_to_full(L, symmetric=False)
     full_cov_matrix = L_matrix @ L_matrix.mT - torch.eye(3, device=L.device).unsqueeze(0) * 1e-3
     return pack_full_to_lower_triangular(full_cov_matrix)
+
 
 def transform_covariance_matrix(
     scaling_rotation: torch.Tensor, covariance: torch.Tensor

@@ -16,7 +16,7 @@ dataset:
   freeze_geometry: false
   compression_fixed_quantization: false
   lambdas_entropy: [0.001]
-  compression_subsample_fraction: 1.0
+  compression_subsample_fraction: 0.1
     
 
 pipeline:

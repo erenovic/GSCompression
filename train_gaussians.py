@@ -155,13 +155,25 @@ if __name__ == "__main__":
     elif dataset.model == "radsplat":
         from training.training_radsplat import training
     elif dataset.model == "hierarchical":
-        pass
+        raise ValueError(
+            "Hierarchical model is not included in this repository.\n"
+            "Use mcmc for Gaussian primitives training."
+        )
     elif dataset.model == "joint":
-        pass
+        raise ValueError(
+            "Joint model is not included in this repository.\n"
+            "Use mcmc for Gaussian primitives training."
+        )
     elif dataset.model == "latent":
-        pass
+        raise ValueError(
+            "Latent model is not included in this repository.\n"
+            "Use mcmc for Gaussian primitives training."
+        )
     elif dataset.model == "octree":
-        pass
+        raise ValueError(
+            "Octree model is not included in this repository.\n"
+            "Use mcmc for Gaussian primitives training."
+        )
     else:
         raise ValueError(f"Unknown model type: {dataset.model}")
 

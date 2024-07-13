@@ -21,28 +21,14 @@ from tqdm import tqdm
 from gaussian_renderer import get_max_alphas
 from gaussian_renderer import render as gaussian_render
 from gaussian_renderer.compression_renderer import render
-
 # from gaussian_renderer.covariance_renderer import render as render
-from models.compression.compression_utils import get_size_in_bits
-from models.compression.multirate_complete_eb import CompleteEntropyBottleneck
-from models.splatting.hierarchical.hierarchy_utils import (
-    aggregate_gaussians_recursively,
-    assign_unique_values,
-    build_octree,
-    calculate_weights,
-    choose_min_max_depth
-)
+from models.compression.multirate_complete_ms import CompleteMeanScaleHyperprior
+from models.splatting.hierarchical.hierarchy_utils import choose_min_max_depth
 from models.splatting.mcmc_model import GaussianModel
 from scene import Scene
-from scene.cameras import Camera
 from training.training_utils import bump_iterations_for_secondary_training
-from utils.general_utils import (
-    build_covariance_from_scaling_rotation,
-    compute_required_rotation_and_scaling,
-    decompose_covariance_matrix,
-    transform_covariance_matrix,
-)
-from utils.loss_utils import l1_loss, l2_loss, ssim
+from utils.general_utils import decompose_covariance_matrix
+from utils.loss_utils import l1_loss, ssim
 
 
 def freeze_geometry(gaussians, dataset):
@@ -71,7 +57,7 @@ def training(
     dataset,
     optimization,
     pipeline,
-    compressor: CompleteEntropyBottleneck,
+    compressor: CompleteMeanScaleHyperprior,
     testing_iterations,
     saving_iterations,
     checkpoint_iterations,
@@ -132,17 +118,17 @@ def training(
     first_iter += 1
 
     with torch.no_grad():
+        # Calculate the hierarchy just once, never update Gaussians
         chosen_depth, max_depth = choose_min_max_depth(gaussians.get_xyz)
 
-        # Calculate the hierarchy just once, never update Gaussians
-        (mean3D, scaling, rotation, covariance, shs, opacity, node_assignment) = compressor.get_cut_attributes(
+        (mean3D, covariance, shs, opacity, node_assignment) = compressor.get_cut_attributes(
             gaussians, chosen_depth, max_depth
         )
 
-        # scaling0, rotation0 = decompose_covariance_matrix(covariance[: covariance.shape[0] // 2])
-        # scaling1, rotation1 = decompose_covariance_matrix(covariance[covariance.shape[0] // 2 :])
-        # scaling = torch.cat((scaling0, scaling1), dim=0)
-        # rotation = torch.cat((rotation0, rotation1), dim=0)
+        scaling0, rotation0 = decompose_covariance_matrix(covariance[: covariance.shape[0] // 2])
+        scaling1, rotation1 = decompose_covariance_matrix(covariance[covariance.shape[0] // 2 :])
+        scaling = torch.cat((scaling0, scaling1), dim=0)
+        rotation = torch.cat((rotation0, rotation1), dim=0)
 
         # Sort the node assignments for more efficient assignment compression
         sorted_node_assignments, sorted_indices = torch.sort(node_assignment)
@@ -189,11 +175,9 @@ def training(
         # 1. Perform intra-coding of the aggregated attributes
         intra_indices = compressor.get_subsample_indices(subsample_fraction, mean3D.shape[0])
 
-        # breakpoint()
-
         intra_input = torch.cat(
             (
-                mean3D[intra_indices],
+                # mean3D[intra_indices],
                 scaling[intra_indices],
                 rotation[intra_indices],
                 opacity[intra_indices],
@@ -207,17 +191,18 @@ def training(
         intra_num_coeffs = len(intra_indices) * intra_num_coeffs
 
         compressed_agg_mean3D = mean3D.clone()
-        compressed_agg_mean3D[intra_indices] = intra_compressed_attrs[:, :3]
         compressed_agg_scaling = scaling.clone()
-        compressed_agg_scaling[intra_indices] = intra_compressed_attrs[:, 3:6]
         compressed_agg_rotation = rotation.clone()
-        compressed_agg_rotation[intra_indices] = intra_compressed_attrs[:, 6:10]
-        # compressed_agg_covariance = covariance.clone()
-        # compressed_agg_covariance[intra_indices] = compressed_attrs[:, 3:9]
         compressed_agg_opacity = opacity.clone()
-        compressed_agg_opacity[intra_indices] = intra_compressed_attrs[:, 10:11]
         compressed_agg_shs = shs.clone()
-        compressed_agg_shs[intra_indices] = intra_compressed_attrs[:, 11:].view(
+        # compressed_agg_covariance = covariance.clone()
+
+        # compressed_agg_mean3D[intra_indices] = intra_compressed_attrs[:, :3]
+        # compressed_agg_covariance[intra_indices] = compressed_attrs[:, 3:9]
+        compressed_agg_scaling[intra_indices] = intra_compressed_attrs[:, :3]
+        compressed_agg_rotation[intra_indices] = intra_compressed_attrs[:, 3:7]
+        compressed_agg_opacity[intra_indices] = torch.clamp(intra_compressed_attrs[:, 7:8], 0, 1)
+        compressed_agg_shs[intra_indices] = intra_compressed_attrs[:, 8:].view(
             intra_compressed_attrs.shape[0], -1, 3
         )
 
@@ -228,14 +213,16 @@ def training(
         inter_indices = compressor.get_subsample_indices(subsample_fraction, mean3D.shape[0])
 
         res_position, res_scaling, res_rotation, res_shs, res_opacity = compressor.get_residuals(
-            gaussians,
-            compressed_agg_mean3D,
-            compressed_agg_scaling,
-            compressed_agg_rotation,
-            compressed_agg_shs,
-            compressed_agg_opacity,
-            sorted_node_assignments,
-            sorted_indices,
+            gaussians.get_xyz[sorted_indices],
+            gaussians.get_scaling[sorted_indices],
+            gaussians.get_rotation[sorted_indices],
+            gaussians.get_features[sorted_indices],
+            gaussians.get_opacity[sorted_indices],
+            compressed_agg_mean3D[sorted_node_assignments].detach(),
+            compressed_agg_scaling[sorted_node_assignments].detach(),
+            compressed_agg_rotation[sorted_node_assignments].detach(),
+            compressed_agg_shs[sorted_node_assignments].detach(),
+            compressed_agg_opacity[sorted_node_assignments].detach(),
         )
         ########################################################################
 
@@ -271,11 +258,15 @@ def training(
         )
 
         full_position = compressed_agg_mean3D[sorted_node_assignments] + out_res_pos
-        full_scaling = compressed_agg_scaling[sorted_node_assignments] + out_res_scaling
-        full_rotation = compressed_agg_rotation[sorted_node_assignments] + out_res_rotation
-        # full_covariance = compressed_agg_covariance[sorted_node_assignments] + out_res_covariance
+        full_scaling = torch.clamp(
+            compressed_agg_scaling[sorted_node_assignments] + out_res_scaling, 1.0e-8
+        )
+        full_rotation = torch.nn.functional.normalize(
+            compressed_agg_rotation[sorted_node_assignments] + out_res_rotation
+        )
         full_shs = compressed_agg_shs[sorted_node_assignments] + out_res_shs
         full_opacity = compressed_agg_opacity[sorted_node_assignments] + out_res_opacity
+        # full_covariance = compressed_agg_covariance[sorted_node_assignments] + out_res_covariance
         ########################################################################
 
         intra_size = compressor.calculate_entropy(intra_likelihoods)
@@ -283,13 +274,6 @@ def training(
         total_bits = intra_size + inter_size
 
         entropy_loss = (intra_size / intra_num_coeffs) + (inter_size / res_num_coeffs)
-
-        # print(full_position.min(), full_position.max())
-        # print(full_scaling.min(), full_scaling.max())
-        # print(full_rotation.min(), full_rotation.max())
-        # print(full_shs.min(), full_shs.max())
-        # print(full_opacity.min(), full_opacity.max())
-        # breakpoint()
 
         render_intra_pkg = render(
             viewpoint_cam,
@@ -327,35 +311,35 @@ def training(
             # logger.info(f"Aggregated means3D size: {agg_means_size / (2**20):.{5}f} MB")
             print("Intra Scale:", compressor.intra_compressor.scale[:, :10])
             print("Inter scale:", compressor.inter_compressor.scale[:, :10])
-            logger.save_image(
-                torch.clamp(image_intra, 0.0, 1.0),
-                f"{logger.rendering_dir}/intra_{iteration}_{viewpoint_cam.image_name}.png",
-            )
-            logger.save_image(
-                torch.clamp(image_inter, 0.0, 1.0),
-                f"{logger.rendering_dir}/inter_{iteration}_{viewpoint_cam.image_name}.png",
-            )
+            # logger.save_image(
+            #     torch.clamp(image_intra, 0.0, 1.0),
+            #     f"{logger.rendering_dir}/intra_{iteration}_{viewpoint_cam.image_name}.png",
+            # )
+            # logger.save_image(
+            #     torch.clamp(image_inter, 0.0, 1.0),
+            #     f"{logger.rendering_dir}/inter_{iteration}_{viewpoint_cam.image_name}.png",
+            # )
 
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
         Ll1_intra = l1_loss(image_intra, gt_image)
         Ll1_inter = l1_loss(image_inter, gt_image)
-        loss = (1.0 - optimization.lambda_dssim) * Ll1_inter + optimization.lambda_dssim * (
-            1.0 - ssim(image_inter, gt_image)
-        ) + (1.0 - optimization.lambda_dssim) * Ll1_intra + optimization.lambda_dssim * (
-            1.0 - ssim(image_intra, gt_image)
+        loss = (
+            (1.0 - optimization.lambda_dssim) * Ll1_inter
+            + optimization.lambda_dssim * (1.0 - ssim(image_inter, gt_image))
+            + (1.0 - optimization.lambda_dssim) * Ll1_intra
+            + optimization.lambda_dssim * (1.0 - ssim(image_intra, gt_image))
         )
-        # loss = 0.0
 
         # loss = loss + optimization.lambda_opacity * torch.abs(gaussians.get_opacity).mean()
         # loss = loss + optimization.lambda_scale * torch.abs(gaussians.get_scaling).mean()
 
         compression_loss = entropy_lambdas[entropy_lambda_level] * entropy_loss
-        pos_loss = l2_loss(full_position, gaussians.get_xyz[sorted_indices])
-        scaling_loss = l2_loss(full_scaling, gaussians.get_scaling[sorted_indices])
-        rotation_loss = l2_loss(full_rotation, gaussians.get_rotation[sorted_indices])
-        sh_loss = l2_loss(full_shs, gaussians.get_features[sorted_indices])
-        opacity_loss = l2_loss(full_opacity, gaussians.get_opacity[sorted_indices])
+        pos_loss = l1_loss(full_position, gaussians.get_xyz[sorted_indices])
+        scaling_loss = l1_loss(full_scaling, gaussians.get_scaling[sorted_indices])
+        rotation_loss = l1_loss(full_rotation, gaussians.get_rotation[sorted_indices])
+        sh_loss = l1_loss(full_shs, gaussians.get_features[sorted_indices])
+        opacity_loss = l1_loss(full_opacity, gaussians.get_opacity[sorted_indices])
 
         loss: torch.Tensor = (
             loss
@@ -389,7 +373,7 @@ def training(
                     {
                         "Loss": f"{ema_loss_for_log:.{7}f}",
                         "Pos": f"{ema_loss_for_pos:.{7}f}",
-                        "Cov": f"{ema_loss_for_scaling:.{7}f}",
+                        "Scale": f"{ema_loss_for_scaling:.{7}f}",
                         "SH": f"{ema_loss_for_sh:.{7}f}",
                         "Opacity": f"{ema_loss_for_opacity:.{7}f}",
                         "Size": f"{(total_bits / (8 * (2**20) * subsample_fraction)).item():.{5}f} MB",
@@ -401,8 +385,7 @@ def training(
                 progress_bar.close()
 
             losses = {
-                "l1": Ll1_inter.item(),
-                # "l1": -1.0,
+                "l1": Ll1_inter.item() + Ll1_intra.item(),
                 "mask": 0.0,
                 "compression": (
                     compression_loss.item() if iteration >= COMPRESSION_TRAIN_ITER_FROM else 0.0
@@ -424,25 +407,24 @@ def training(
                     chosen_depth, max_depth = choose_min_max_depth(gaussians.get_xyz)
 
                     # Calculate the hierarchy just once, never update Gaussians
-                    (mean3D, scaling, rotation, _, shs, opacity, node_assignment) = eb.get_cut_attributes(
+                    (mean3D, covariance, shs, opacity, node_assignment) = eb.get_cut_attributes(
                         gaussians, chosen_depth, max_depth
                     )
+
+                    scaling0, rotation0 = decompose_covariance_matrix(
+                        covariance[: covariance.shape[0] // 2]
+                    )
+                    scaling1, rotation1 = decompose_covariance_matrix(
+                        covariance[covariance.shape[0] // 2 :]
+                    )
+                    scaling = torch.cat((scaling0, scaling1), dim=0)
+                    rotation = torch.cat((rotation0, rotation1), dim=0)
 
                     # Sort the node assignments for more efficient assignment compression
                     sorted_node_assignments, sorted_indices = torch.sort(node_assignment)
 
-                    # scaling0, rotation0 = decompose_covariance_matrix(
-                    #     covariance[: covariance.shape[0] // 2]
-                    # )
-                    # scaling1, rotation1 = decompose_covariance_matrix(
-                    #     covariance[covariance.shape[0] // 2 :]
-                    # )
-                    # scaling = torch.cat((scaling0, scaling1), dim=0)
-                    # rotation = torch.cat((rotation0, rotation1), dim=0)
-
                     intra_input = torch.cat(
                         (
-                            mean3D,
                             scaling,
                             rotation,
                             opacity,
@@ -465,24 +447,33 @@ def training(
                         level=intra_compress_result_dict["level"],
                     )
 
-                    agg_test_position = decompressed_attrs[:, :3]
-                    agg_test_scaling = decompressed_attrs[:, 3:6]
-                    agg_test_rotation = decompressed_attrs[:, 6:10]
-                    agg_test_opacity = decompressed_attrs[:, 10:11]
-                    agg_test_shs = decompressed_attrs[:, 11:].view(
+                    agg_test_position = mean3D
+                    agg_test_scaling = decompressed_attrs[:, :3]
+                    agg_test_rotation = decompressed_attrs[:, 3:7]
+                    agg_test_opacity = decompressed_attrs[:, 7:8]
+                    agg_test_shs = decompressed_attrs[:, 8:].view(
                         decompressed_attrs.shape[0], -1, 3
                     )
+                    # agg_test_position = decompressed_attrs[:, :3]
+                    # agg_test_scaling = decompressed_attrs[:, 3:6]
+                    # agg_test_rotation = decompressed_attrs[:, 6:10]
+                    # agg_test_opacity = decompressed_attrs[:, 10:11]
+                    # agg_test_shs = decompressed_attrs[:, 11:].view(
+                    #     decompressed_attrs.shape[0], -1, 3
+                    # )
 
                     res_position, res_scaling, res_rotation, res_shs, res_opacity = (
                         eb.get_residuals(
-                            gaussians,
-                            agg_test_position,
-                            agg_test_scaling,
-                            agg_test_rotation,
-                            agg_test_shs,
-                            agg_test_opacity,
-                            sorted_node_assignments,
-                            sorted_indices,
+                            gaussians.get_xyz[sorted_indices],
+                            gaussians.get_scaling[sorted_indices],
+                            gaussians.get_rotation[sorted_indices],
+                            gaussians.get_features[sorted_indices],
+                            gaussians.get_opacity[sorted_indices],
+                            agg_test_position[sorted_node_assignments],
+                            agg_test_scaling[sorted_node_assignments],
+                            agg_test_rotation[sorted_node_assignments],
+                            agg_test_shs[sorted_node_assignments],
+                            agg_test_opacity[sorted_node_assignments],
                         )
                     )
 
@@ -514,14 +505,16 @@ def training(
                     test_position = (
                         agg_test_position[sorted_node_assignments] + compressed_attrs[:, :3]
                     )
-                    test_scaling = (
-                        agg_test_scaling[sorted_node_assignments] + compressed_attrs[:, 3:6]
+                    test_scaling = torch.clamp(
+                        agg_test_scaling[sorted_node_assignments] + compressed_attrs[:, 3:6], 1.0e-8
                     )
-                    test_rotation = (
+                    test_rotation = torch.nn.functional.normalize(
                         agg_test_rotation[sorted_node_assignments] + compressed_attrs[:, 6:10]
                     )
-                    test_opacity = (
-                        agg_test_opacity[sorted_node_assignments] + compressed_attrs[:, 10:11]
+                    test_opacity = torch.clamp(
+                        agg_test_opacity[sorted_node_assignments] + compressed_attrs[:, 10:11],
+                        0.0,
+                        1.0,
                     )
                     test_shs = agg_test_shs[sorted_node_assignments] + compressed_attrs[
                         :, 11:
@@ -563,43 +556,12 @@ def training(
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
 
-            # if (
-            #     iteration < optimization.densify_until_iter
-            #     and iteration > optimization.densify_from_iter
-            #     and iteration % optimization.densification_interval == 0
-            # ):
-            #     dead_mask = (gaussians.get_opacity <= 0.005).squeeze(-1)
-            #     gaussians.relocate_gs(dead_mask=dead_mask)
-            #     gaussians.add_new_gs(cap_max=dataset.cap_max)
-
             # Optimizer step
             if iteration < optimization.iterations:
-                # gaussians.optimizer.step()
-                # gaussians.optimizer.zero_grad(set_to_none=True)
-
-                # L = build_scaling_rotation(gaussians.get_scaling, gaussians.get_rotation)
-                # actual_covariance = L @ L.transpose(1, 2)
-
-                # def op_sigmoid(x, k=100, x0=0.995):
-                #     return 1 / (1 + torch.exp(-k * (x - x0)))
-
-                # noise = (
-                #     torch.randn_like(gaussians._xyz)
-                #     * (op_sigmoid(1 - gaussians.get_opacity))
-                #     * optimization.noise_lr
-                #     * xyz_lr
-                # )
-                # noise = torch.bmm(actual_covariance, noise.unsqueeze(-1)).squeeze(-1)
-                # gaussians._xyz.add_(noise)
-
                 compressor.optimizer.step()
                 compressor.optimizer.zero_grad(set_to_none=True)
                 compressor.aux_optimizer.step()
                 compressor.aux_optimizer.zero_grad(set_to_none=True)
-
-            # if iteration in optimization.radsplat_prune_at:
-            #     max_alphas = get_max_alphas_over_training_cameras(gaussians, scene, pipeline)
-            #     gaussians.radsplat_prune(max_alphas, optimization.radsplat_prune_threshold)
 
             if iteration in optimization.checkpoint_iterations:
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))

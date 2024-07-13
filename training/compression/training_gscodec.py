@@ -27,14 +27,9 @@ from models.splatting.mcmc_model import GaussianModel
 from scene import Scene
 from scene.cameras import Camera
 from training.training_utils import bump_iterations_for_secondary_training
-from utils.general_utils import (
-    build_covariance_from_scaling_rotation,
-    build_rotation,
-    decompose_covariance_matrix,
-    unpack_lower_triangular_to_full,
-    rotation_matrix_to_quaternion,
-    inverse_sigmoid,
-)
+from utils.general_utils import (build_covariance_from_scaling_rotation, build_rotation,
+                                 decompose_covariance_matrix, inverse_sigmoid,
+                                 rotation_matrix_to_quaternion, unpack_lower_triangular_to_full)
 from utils.loss_utils import l1_loss, l2_loss, ssim
 
 
@@ -127,8 +122,8 @@ def training(
         # Calculate the hierarchy just once, never update Gaussians
         chosen_depth, max_depth = choose_min_max_depth(gaussians.get_xyz)
 
-        (mean3D, scaling, rotation, covariance, shs, opacity, node_assignment) = compressor.get_cut_attributes(
-            gaussians, chosen_depth, max_depth
+        (mean3D, scaling, rotation, covariance, shs, opacity, node_assignment) = (
+            compressor.get_cut_attributes(gaussians, chosen_depth, max_depth)
         )
 
         # Sort the node assignments for more efficient assignment compression
@@ -183,9 +178,11 @@ def training(
                 scaling[sorted_node_assignments[subsample_indices]],
                 rotation[sorted_node_assignments[subsample_indices]],
                 opacity[sorted_node_assignments[subsample_indices]],
-                shs[sorted_node_assignments[subsample_indices]].view(-1, 3 * ((dataset.sh_degree + 1) ** 2))
+                shs[sorted_node_assignments[subsample_indices]].view(
+                    -1, 3 * ((dataset.sh_degree + 1) ** 2)
+                ),
             ),
-            dim=1
+            dim=1,
         )
         x_cur = torch.cat(
             (

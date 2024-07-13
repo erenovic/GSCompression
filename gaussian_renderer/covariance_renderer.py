@@ -12,12 +12,8 @@
 import math
 
 import torch
-from diff_gaussian_rasterization import (
-    AlphaRetrievalSettings,
-    AlphaRetriever,
-    GaussianRasterizationSettings,
-    GaussianRasterizer,
-)
+from diff_gaussian_rasterization import (AlphaRetrievalSettings, AlphaRetriever,
+                                         GaussianRasterizationSettings, GaussianRasterizer)
 
 from models.splatting.base_model import GaussianModel
 from utils.sh_utils import eval_sh
