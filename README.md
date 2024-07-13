@@ -31,6 +31,8 @@ pip install submodules/simple-knn
 pip install submodules/build_octree
 ```
 
+As an addition to the regular packages `diff-gaussian-rasterization`, and `simple-knn`, we have added the `build_octree` package to the submodules. This package is used for building an octree structure for the hierarchical Gaussian splatting compression experiments.
+
 ## Datasets
 
 For our experiments, we used [Tanks and Temples](https://github.com/graphdeco-inria/gaussian-splatting), [DeepBlending](https://github.com/graphdeco-inria/gaussian-splatting) and [MipNeRF](https://jonbarron.info/mipnerf360/) datasets. 
