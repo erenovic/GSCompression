@@ -28,7 +28,7 @@ Please refer to [3D-MCMC Codebase](https://github.com/ubc-vision/3dgs-mcmc) for 
 ```bash
 pip install submodules/diff-gaussian-rasterization
 pip install submodules/simple-knn
-# pip install submodules/build_octree
+pip install submodules/build_octree
 ```
 
 ## Datasets
