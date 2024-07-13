@@ -167,6 +167,7 @@ As important components of this codebase, we have the following important folder
     - `testing_base.py`: Contains the base testing script for 3D-GS model without any compression.
     - `testing_masked.py`: Contains the testing script for masked 3D-GS model without any compression.
     - `testing_compressed.py`: Contains the testing script for compressed 3D-GS model with the entropy model of choice (meanscale or entropybottleneck). This script is NOT used for compression with the hierarchical structure.
+    - `testing_complete.py`: Contains the testing script for compressed 3D-GS model with the entropy model of choice with the hierarchical structure and residual coding.
     - `testing_utils.py`: Contains the utility functions for testing scripts.
 
 ### Gaussian Splatting Optimization
@@ -303,7 +304,7 @@ python train_compression.py --scene_name tandt/train \
     --checkpoint ./output/mcmc_model/tandt/train/chkpnt25000.pth
 ```
 
-### Testing
+## Testing
 
 To test the compressed Gaussian splat representation, you can use `test.py` script with respective config file. To run the script, you need to provide following arguments:
 
