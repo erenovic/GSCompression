@@ -99,7 +99,7 @@ if __name__ == "__main__":
             "Use mcmc for compression training."
         )
     elif dataset.model == "complete":
-        from training.compression.training_hierarchical_complete_mcmc import training
+        from training.compression.training_complete import training
     elif dataset.model == "hierarchical":
         raise ValueError(
             "Hierarchical model is not included in this repository.\n"
