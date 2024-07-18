@@ -104,6 +104,7 @@ def training(
 
     COMPRESSION_TRAIN_ITER_FROM = dataset.compression_training_from
     entropy_lambdas = dataset.lambdas_entropy
+    subsample_fraction = dataset.compression_subsample_fraction
     print(f"Entropy lambdas: {entropy_lambdas}")
 
     viewpoint_stack = None
@@ -135,7 +136,7 @@ def training(
         if iteration > COMPRESSION_TRAIN_ITER_FROM:
             entropy_lambda_level = np.random.randint(0, len(entropy_lambdas))
             gaussian_params, likelihoods, indices, num_coeffs, subsample_fraction = compressor(
-                gaussians, iteration, entropy_lambda_level
+                gaussians, iteration, entropy_lambda_level, subsample_fraction
             )
             num_coeffs = len(indices) * num_coeffs
 
@@ -198,9 +199,10 @@ def training(
         if iteration > COMPRESSION_TRAIN_ITER_FROM:
             loss = loss + (
                 entropy_lambdas[entropy_lambda_level] * entropy_loss
-                + optimization.lambda_rec * l1_loss(opacities, gaussians._opacity)
-                + optimization.lambda_rec * l1_loss(scales, gaussians._scaling)
-                + optimization.lambda_rec * l1_loss(rotations, gaussians._rotation)
+                + optimization.lambda_rec * l1_loss(opacities, gaussians.get_opacity)
+                + optimization.lambda_rec * l1_loss(scales, gaussians.get_scaling)
+                + optimization.lambda_rec * l1_loss(rotations, gaussians.get_rotation)
+                + optimization.lambda_rec * l1_loss(shs, gaussians.get_features)
             )
 
         aux_loss = compressor.aux_loss()
